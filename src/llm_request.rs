@@ -463,6 +463,14 @@ fn extract_chunk_from_event(
 
 #[cfg(reasoning)]
 async fn send_delta_thinking_end(
+    _: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    _: &response_stream::ChatCompletionChunk,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}
+
+#[cfg(not(reasoning))]
+async fn send_delta_thinking_end(
     sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
     chunk: &response_stream::ChatCompletionChunk,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -475,12 +483,4 @@ async fn send_delta_thinking_end(
         },
     )
     .await
-}
-
-#[cfg(not(reasoning))]
-async fn send_delta_thinking_end(
-    _: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-    _: &response_stream::ChatCompletionChunk,
-) -> Result<(), Box<dyn std::error::Error>> {
-    Ok(())
 }
