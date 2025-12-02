@@ -1,21 +1,12 @@
-use super::{FinishReason, LogProbs, Role, ToolCall, Usage};
-use serde::{self, Deserialize, Serialize};
-use serde_json::Value;
+use crate::models::request::MessageAssistant;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Message {
-    pub(crate) role: Role,
-    pub(crate) content: String,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) tool_calls: Option<Vec<Value>>,
-}
+use super::{FinishReason, LogProbs, Usage};
+use serde::{self, Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Choice {
     pub(crate) index: i32,
-    pub(crate) message: Message,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) tool_calls: Option<Vec<ToolCall>>,
+    pub(crate) message: MessageAssistant,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) logprobs: Option<LogProbs>,
     pub(crate) finish_reason: FinishReason,

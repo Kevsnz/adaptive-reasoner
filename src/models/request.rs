@@ -37,6 +37,40 @@ pub(crate) struct MessageAssistant {
     pub(crate) tool_calls: Option<Vec<Value>>,
 }
 
+impl MessageAssistant {
+    #[cfg(reasoning)]
+    pub(crate) fn new(
+        reasoning_content: String,
+        content: String,
+        tool_calls: Option<Vec<Value>>,
+    ) -> MessageAssistant {
+        MessageAssistant {
+            reasoning_content: Some(reasoning_content),
+            content: Some(content),
+            tool_calls: tool_calls,
+        }
+    }
+
+    #[cfg(not(reasoning))]
+    pub(crate) fn new(
+        reasoning_content: String,
+        content: String,
+        tool_calls: Option<Vec<serde_json::Value>>,
+    ) -> MessageAssistant {
+        MessageAssistant {
+            reasoning_content: None,
+            content: Some(format!(
+                "{}\n{}\n{}\n{}",
+                crate::consts::THINK_START,
+                reasoning_content.trim(),
+                crate::consts::THINK_END,
+                content
+            )),
+            tool_calls: tool_calls,
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct MessageTool {
     pub(crate) tool_call_id: String,

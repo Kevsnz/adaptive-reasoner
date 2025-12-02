@@ -7,13 +7,13 @@ use tokio::sync::mpsc::Sender;
 use crate::config;
 use crate::consts;
 use crate::models::FinishReason;
-use crate::models::Role;
 use crate::models::Usage;
 use crate::models::request;
 use crate::models::request::ChatCompletionCreate;
 use crate::models::response_direct;
 use crate::models::response_direct::ChatCompletion;
 use crate::models::response_stream;
+use crate::models::response_stream::ChunkChoiceDelta;
 use std::io;
 use std::io::Write;
 use std::time::Duration;
@@ -108,7 +108,10 @@ pub(crate) async fn create_chat_completion(
     };
     let prompt_tokens = reasoning_response.usage.prompt_tokens;
     let reasoning_tokens = reasoning_response.usage.completion_tokens;
-    let mut reasoning_text = reasoning_choice.message.content.to_string();
+    let mut reasoning_text: String = match &reasoning_choice.message.content {
+        Some(content) => content.trim().to_string(),
+        None => "".to_string(),
+    };
 
     println!("   ***   Reasoning text: {}", reasoning_text);
     println!(
@@ -153,7 +156,10 @@ pub(crate) async fn create_chat_completion(
             None => return Err("error: no answer response".into()),
         };
 
-        answer_text = answer_choice.message.content.trim().into();
+        answer_text = match &answer_choice.message.content {
+            Some(content) => content.trim().to_string(),
+            None => "".to_string(),
+        };
         answer_tool_calls = answer_choice.message.tool_calls.clone();
         answer_tokens = answer_response.usage.completion_tokens;
         finish_reason = answer_choice.finish_reason;
@@ -175,18 +181,7 @@ pub(crate) async fn create_chat_completion(
         model: request.model.clone(),
         choices: vec![response_direct::Choice {
             index: 0,
-            message: response_direct::Message {
-                role: Role::Assistant,
-                content: format!(
-                    "{}\n{}\n{}\n{}",
-                    consts::THINK_START,
-                    reasoning_text.trim(),
-                    consts::THINK_END,
-                    answer_text
-                ),
-                tool_calls: answer_tool_calls,
-            },
-            tool_calls: None,
+            message: request::MessageAssistant::new(reasoning_text, answer_text, answer_tool_calls),
             logprobs: None,
             finish_reason: finish_reason,
         }],
@@ -196,6 +191,40 @@ pub(crate) async fn create_chat_completion(
             total_tokens: prompt_tokens + reasoning_tokens + answer_tokens,
         },
     })
+}
+
+async fn send_data(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    data: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let event_data = format!("data: {}\n\n", data);
+    // println!("   ***   event_data: {:}", event_data);
+    if let Err(e) = sender.send(Ok(event_data.into())).await {
+        println!("error: failed to send message: {:?}", e.0);
+        return Err("failed to send message".into());
+    }
+    Ok(())
+}
+
+async fn send_chunk(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    chunk: &response_stream::ChatCompletionChunk,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_data(sender, serde_json::to_string(chunk).unwrap()).await
+}
+
+async fn send_delta(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    mut chunk: response_stream::ChatCompletionChunk,
+    delta: response_stream::ChunkChoiceDelta,
+) -> Result<(), Box<dyn std::error::Error>> {
+    chunk.choices = vec![response_stream::ChunkChoice {
+        index: 0,
+        delta: delta,
+        logprobs: None,
+        finish_reason: None,
+    }];
+    send_chunk(&sender, &chunk).await
 }
 
 pub(crate) async fn stream_chat_completion(
@@ -214,32 +243,6 @@ pub(crate) async fn stream_chat_completion(
     }
 
     let (model, reasoning_budget) = config::MODEL_MAPPING.get(&request.model).unwrap();
-
-    let send_data = async move |data: String| -> Result<(), Box<dyn std::error::Error>> {
-        let event_data = format!("data: {}\n\n", data);
-        // println!("   ***   event_data: {:}", event_data);
-        if let Err(e) = sender.send(Ok(event_data.into())).await {
-            println!("error: failed to send message: {:?}", e.0);
-            return Err("failed to send message".into());
-        }
-        Ok(())
-    };
-
-    let send_chunk =
-        async |chunk: &response_stream::ChatCompletionChunk| -> Result<(), Box<dyn std::error::Error>> {
-            send_data(serde_json::to_string(chunk).unwrap()).await
-        };
-    let send_delta = async |mut chunk: response_stream::ChatCompletionChunk,
-                            delta: response_stream::ChunkChoiceDelta|
-           -> Result<(), Box<dyn std::error::Error>> {
-        chunk.choices = vec![response_stream::ChunkChoice {
-            index: 0,
-            delta: delta,
-            logprobs: None,
-            finish_reason: None,
-        }];
-        send_chunk(&chunk).await
-    };
 
     let mut message_assistant = request::MessageAssistant {
         reasoning_content: None,
@@ -305,16 +308,13 @@ pub(crate) async fn stream_chat_completion(
         }
 
         if first_chunk {
-            first_chunk = false;
             send_delta(
+                &sender,
                 outgoing_chunk.clone(),
-                response_stream::ChunkChoiceDelta {
-                    role: Some(Role::Assistant),
-                    content: Some(consts::THINK_START.to_string()),
-                    tool_calls: None,
-                },
+                ChunkChoiceDelta::chunk_choice_delta_opening(),
             )
             .await?;
+            first_chunk = false;
         }
 
         if let Some(content) = reasoning_choice.delta.content.clone() {
@@ -323,12 +323,9 @@ pub(crate) async fn stream_chat_completion(
             io::stdout().flush().unwrap();
 
             send_delta(
+                &sender,
                 outgoing_chunk.clone(),
-                response_stream::ChunkChoiceDelta {
-                    role: None,
-                    content: Some(content),
-                    tool_calls: None,
-                },
+                ChunkChoiceDelta::chunk_choice_delta_reasoning(content),
             )
             .await?;
         }
@@ -350,12 +347,11 @@ pub(crate) async fn stream_chat_completion(
                 consts::REASONING_CUTOFF_STUB
             );
             send_delta(
+                &sender,
                 outgoing_chunk.clone(),
-                response_stream::ChunkChoiceDelta {
-                    role: None,
-                    content: Some(format!("...\n\n{}\n", consts::REASONING_CUTOFF_STUB)),
-                    tool_calls: None,
-                },
+                ChunkChoiceDelta::chunk_choice_delta_reasoning(
+                    format!("...\n\n{}\n", consts::REASONING_CUTOFF_STUB).to_string(),
+                ),
             )
             .await?;
         }
@@ -366,15 +362,7 @@ pub(crate) async fn stream_chat_completion(
             reasoning_text,
             consts::THINK_END,
         ));
-        send_delta(
-            outgoing_chunk.clone(),
-            response_stream::ChunkChoiceDelta {
-                role: None,
-                content: Some(consts::THINK_END.to_string()),
-                tool_calls: None,
-            },
-        )
-        .await?;
+        send_delta_thinking_end(&sender, &outgoing_chunk).await?;
 
         let mut answer_request: ChatCompletionCreate = request.clone();
         answer_request.model = model.to_string();
@@ -411,7 +399,7 @@ pub(crate) async fn stream_chat_completion(
                 io::stdout().flush().unwrap();
             }
             outgoing_chunk.choices = vec![answer_choice.clone()];
-            send_chunk(&outgoing_chunk).await?;
+            send_chunk(&sender, &outgoing_chunk).await?;
         }
         println!();
 
@@ -419,15 +407,11 @@ pub(crate) async fn stream_chat_completion(
     } else {
         outgoing_chunk.choices = vec![response_stream::ChunkChoice {
             index: 0,
-            delta: response_stream::ChunkChoiceDelta {
-                role: None,
-                content: Some("".to_string()),
-                tool_calls: None,
-            },
+            delta: ChunkChoiceDelta::chunk_choice_delta_empty(),
             logprobs: None,
             finish_reason: Some(FinishReason::Length),
         }];
-        send_chunk(&outgoing_chunk).await?;
+        send_chunk(&sender, &outgoing_chunk).await?;
     }
 
     if let Some(stream_options) = request.stream_options
@@ -439,10 +423,10 @@ pub(crate) async fn stream_chat_completion(
             completion_tokens: reasoning_tokens + answer_tokens,
             total_tokens: prompt_tokens + reasoning_tokens + answer_tokens,
         });
-        send_chunk(&outgoing_chunk).await?;
+        send_chunk(&sender, &outgoing_chunk).await?;
     }
 
-    send_data("[DONE]".into()).await?;
+    send_data(&sender, "[DONE]".into()).await?;
 
     Ok(())
 }
@@ -475,4 +459,28 @@ fn extract_chunk_from_event(
         Err(e) => return Err(Box::new(e)),
     };
     Ok(Some(chunk))
+}
+
+#[cfg(reasoning)]
+async fn send_delta_thinking_end(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    chunk: &response_stream::ChatCompletionChunk,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_delta(
+        sender,
+        chunk.clone(),
+        response_stream::ChunkChoiceDelta {
+            content: Some(consts::THINK_END.to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+#[cfg(not(reasoning))]
+async fn send_delta_thinking_end(
+    _: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    _: &response_stream::ChatCompletionChunk,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
 }

@@ -32,10 +32,3 @@ pub(crate) struct Usage {
 pub(crate) struct LogProbs {
     pub(crate) tokens: Vec<f32>,
 }
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct ToolCall {
-    pub(crate) name: String,
-    pub(crate) arguments: String,
-    pub(crate) function_call: String,
-}
