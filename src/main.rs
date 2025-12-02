@@ -3,8 +3,8 @@ mod consts;
 mod llm_request;
 mod models;
 
-use actix_web::mime;
 use actix_web::web::Bytes;
+use actix_web::{middleware::Logger, mime};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -64,17 +64,22 @@ async fn chat_completion(
 async fn main() -> std::io::Result<()> {
     println!("Welcome!");
 
-    actix_web::HttpServer::new(|| {
-        actix_web::App::new().service(
-            actix_web::web::scope("/v1")
-                .route("/models", actix_web::web::get().to(models))
-                .route(
-                    "/chat/completions",
-                    actix_web::web::post().to(chat_completion),
-                ),
-        )
-    })
-    .bind(("127.0.0.1", 8080))?
-    .run()
-    .await
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+
+    let app_factory = || {
+        let router = actix_web::web::scope("/v1")
+            .route("/models", actix_web::web::get().to(models))
+            .route(
+                "/chat/completions",
+                actix_web::web::post().to(chat_completion),
+            );
+
+        actix_web::App::new()
+            .wrap(Logger::default())
+            .service(router)
+    };
+
+    let server = actix_web::HttpServer::new(app_factory);
+
+    server.bind(("0.0.0.0", 8080))?.run().await
 }
