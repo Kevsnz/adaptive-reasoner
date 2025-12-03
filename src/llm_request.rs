@@ -16,7 +16,6 @@ use crate::models::response_stream;
 use crate::models::response_stream::ChunkChoiceDelta;
 use std::io;
 use std::io::Write;
-use std::time::Duration;
 
 pub(crate) struct LLMClient {
     client: reqwest::Client,
@@ -43,12 +42,10 @@ async fn perform_request(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
     expected_content_type: mime::Mime,
-    timeout: Duration,
 ) -> Result<Response, Box<dyn std::error::Error>> {
     let response = client
         .post("/chat/completions")
         .json(&request)
-        .timeout(timeout)
         .send()
         .await?;
 
@@ -63,11 +60,9 @@ async fn perform_request(
         .to_str()?
         .parse()?;
     if content_type.essence_str() != expected_content_type.essence_str() {
-        return Err(format!(
-            "content-type: {:?}, expected: {:?}",
-            content_type, expected_content_type
-        )
-        .into());
+        return Err(
+            format!("content-type: {content_type}, expected: {expected_content_type}").into(),
+        );
     }
 
     Ok(response)
@@ -76,7 +71,6 @@ async fn perform_request(
 pub(crate) async fn create_chat_completion(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
-    timeout: Duration,
     model_config: &config::ModelConfig,
 ) -> Result<response_direct::ChatCompletion, Box<dyn std::error::Error>> {
     if request.messages.len() == 0 {
@@ -88,7 +82,6 @@ pub(crate) async fn create_chat_completion(
         );
     }
 
-    let (model, reasoning_budget) = config::MODEL_MAPPING.get(&request.model).unwrap();
     let mut message_assistant = request::MessageAssistant {
         reasoning_content: None,
         content: Some(consts::THINK_START.to_string()),
@@ -103,8 +96,7 @@ pub(crate) async fn create_chat_completion(
     reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
     reasoning_request.max_tokens = Some(model_config.reasoning_budget);
 
-    let response =
-        perform_request(client, reasoning_request, mime::APPLICATION_JSON, timeout).await?;
+    let response = perform_request(client, reasoning_request, mime::APPLICATION_JSON).await?;
 
     let reasoning_response = response.json::<response_direct::ChatCompletion>().await?;
     let reasoning_choice = match reasoning_response.choices.first() {
@@ -152,8 +144,7 @@ pub(crate) async fn create_chat_completion(
             .push(request::Message::Assistant(message_assistant.clone()));
         answer_request.max_tokens = Some(remaining_tokens);
 
-        let response =
-            perform_request(client, answer_request, mime::APPLICATION_JSON, timeout).await?;
+        let response = perform_request(client, answer_request, mime::APPLICATION_JSON).await?;
 
         let answer_response = response.json::<response_direct::ChatCompletion>().await?;
         let answer_choice = match answer_response.choices.first() {
@@ -237,7 +228,6 @@ pub(crate) async fn stream_chat_completion(
     request: request::ChatCompletionCreate,
     model_config: &config::ModelConfig,
     sender: Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-    timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if request.messages.len() == 0 {
         return Err("error: empty messages".into());
@@ -282,8 +272,7 @@ pub(crate) async fn stream_chat_completion(
     };
 
     // Reasoning stream
-    let mut response =
-        perform_request(client, reasoning_request, mime::TEXT_EVENT_STREAM, timeout).await?;
+    let mut response = perform_request(client, reasoning_request, mime::TEXT_EVENT_STREAM).await?;
 
     let mut first_chunk = true;
     print!("   ***   Reasoning text:");
@@ -378,8 +367,7 @@ pub(crate) async fn stream_chat_completion(
             include_usage: Some(true),
         });
 
-        let mut response =
-            perform_request(client, answer_request, mime::TEXT_EVENT_STREAM, timeout).await?;
+        let mut response = perform_request(client, answer_request, mime::TEXT_EVENT_STREAM).await?;
 
         print!("   ***   Answer text: ");
         loop {
