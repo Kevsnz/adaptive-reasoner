@@ -3,18 +3,19 @@ mod consts;
 mod llm_request;
 mod models;
 
-use actix_web::web::Bytes;
+use actix_web::web::{Bytes, Data, ThinData};
 use actix_web::{middleware::Logger, mime};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::models::{model_list, request};
+use std::sync::Arc;
 use std::time::Duration;
 
-async fn models() -> impl actix_web::Responder {
+async fn models(config: Data<config::Config>) -> impl actix_web::Responder {
     let mut model_list: Vec<model_list::Model> = vec![];
 
-    for model_name in config::MODEL_MAPPING.keys() {
+    for model_name in config.models.keys() {
         model_list.push(model_list::Model {
             id: model_name.to_string(),
             object: model_list::ObjectType::Model,
@@ -29,21 +30,25 @@ async fn models() -> impl actix_web::Responder {
 }
 
 async fn chat_completion(
+    ThinData(client): ThinData<reqwest::Client>,
+    config: Data<config::Config>,
     request: actix_web::web::Json<request::ChatCompletionCreate>,
 ) -> impl actix_web::Responder {
-    if let None = config::MODEL_MAPPING.get(&request.0.model) {
-        println!("error: invalid model name");
-        return actix_web::HttpResponse::BadRequest().finish();
+    let model_config = match config.models.get(&request.0.model).cloned() {
+        Some(model_config) => model_config,
+        None => {
+            println!("error: invalid model name");
+            return actix_web::HttpResponse::BadRequest().finish();
+        }
     };
 
-    let client = llm_request::LLMClient::new(reqwest::Client::new(), config::API_URL);
-    println!("   ***   Request: {:?}\n   ***   ", request.0);
+    let client = llm_request::LLMClient::new(client, &model_config.api_url, &model_config.api_key);
+    // println!("   ***   Request: {:?}\n   ***   ", request.0);
 
     if request.stream.unwrap_or(false) {
         let (sender, receiver) = mpsc::channel::<Result<Bytes, Box<dyn std::error::Error>>>(100);
         actix_web::rt::spawn(async move {
-            llm_request::stream_chat_completion(&client, request.0, sender, Duration::new(300, 0))
-                .await
+            llm_request::stream_chat_completion(&client, request.0, &model_config, sender).await
         });
 
         return actix_web::HttpResponse::Ok()
@@ -51,7 +56,7 @@ async fn chat_completion(
             .streaming(ReceiverStream::new(receiver));
     }
 
-    match llm_request::create_chat_completion(&client, request.0, Duration::new(300, 0)).await {
+    match llm_request::create_chat_completion(&client, request.0, &model_config).await {
         Ok(chat_completion) => actix_web::HttpResponse::Ok().json(chat_completion),
         Err(e) => {
             println!("error: {:?}", e);
@@ -64,9 +69,18 @@ async fn chat_completion(
 async fn main() -> std::io::Result<()> {
     println!("Welcome!");
 
-    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    dotenv::dotenv().ok();
 
-    let app_factory = || {
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    let model_config = config::load_config();
+    let data = Data::from(Arc::new(model_config));
+
+    let app_factory = move || {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::new(30, 0))
+            .read_timeout(Duration::new(10, 0))
+            .build();
+
         let router = actix_web::web::scope("/v1")
             .route("/models", actix_web::web::get().to(models))
             .route(
@@ -76,6 +90,8 @@ async fn main() -> std::io::Result<()> {
 
         actix_web::App::new()
             .wrap(Logger::default())
+            .app_data(ThinData(client))
+            .app_data(Data::clone(&data))
             .service(router)
     };
 

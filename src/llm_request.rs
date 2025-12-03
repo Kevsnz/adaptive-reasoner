@@ -21,17 +21,21 @@ use std::time::Duration;
 pub(crate) struct LLMClient {
     client: reqwest::Client,
     base_url: String,
+    api_key: String,
 }
 
 impl LLMClient {
-    pub(crate) fn new(client: reqwest::Client, base_url: &str) -> Self {
+    pub(crate) fn new(client: reqwest::Client, base_url: &str, api_key: &str) -> Self {
         Self {
             client,
             base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
         }
     }
     fn post(&self, url: &str) -> reqwest::RequestBuilder {
-        self.client.post(format!("{}{}", self.base_url, url))
+        self.client
+            .post(format!("{}{}", self.base_url, url))
+            .header("Authorization", format!("Bearer {}", self.api_key))
     }
 }
 
@@ -52,7 +56,7 @@ async fn perform_request(
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
 
-        return Err(format!("error: status {:?}, text {:?}", status, text).into());
+        return Err(format!("error: status {status}, text {text}").into());
     }
 
     let content_type: mime::Mime = response.headers()[reqwest::header::CONTENT_TYPE]
@@ -73,6 +77,7 @@ pub(crate) async fn create_chat_completion(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
     timeout: Duration,
+    model_config: &config::ModelConfig,
 ) -> Result<response_direct::ChatCompletion, Box<dyn std::error::Error>> {
     if request.messages.len() == 0 {
         return Err("error: empty messages".into());
@@ -91,12 +96,12 @@ pub(crate) async fn create_chat_completion(
     };
 
     let mut reasoning_request: ChatCompletionCreate = request.clone();
-    reasoning_request.model = model.to_string();
+    reasoning_request.model = model_config.model_name.to_string();
     reasoning_request
         .messages
         .push(request::Message::Assistant(message_assistant.clone()));
     reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
-    reasoning_request.max_tokens = Some(*reasoning_budget);
+    reasoning_request.max_tokens = Some(model_config.reasoning_budget);
 
     let response =
         perform_request(client, reasoning_request, mime::APPLICATION_JSON, timeout).await?;
@@ -141,7 +146,7 @@ pub(crate) async fn create_chat_completion(
         ));
 
         let mut answer_request: ChatCompletionCreate = request.clone();
-        answer_request.model = model.to_string();
+        answer_request.model = model_config.model_name.to_string();
         answer_request
             .messages
             .push(request::Message::Assistant(message_assistant.clone()));
@@ -230,6 +235,7 @@ async fn send_delta(
 pub(crate) async fn stream_chat_completion(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
+    model_config: &config::ModelConfig,
     sender: Sender<Result<Bytes, Box<dyn std::error::Error>>>,
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -242,8 +248,6 @@ pub(crate) async fn stream_chat_completion(
         );
     }
 
-    let (model, reasoning_budget) = config::MODEL_MAPPING.get(&request.model).unwrap();
-
     let mut message_assistant = request::MessageAssistant {
         reasoning_content: None,
         content: Some(consts::THINK_START.to_string()),
@@ -251,12 +255,12 @@ pub(crate) async fn stream_chat_completion(
     };
 
     let mut reasoning_request: ChatCompletionCreate = request.clone();
-    reasoning_request.model = model.to_string();
+    reasoning_request.model = model_config.model_name.to_string();
     reasoning_request
         .messages
         .push(request::Message::Assistant(message_assistant.clone()));
     reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
-    reasoning_request.max_tokens = Some(*reasoning_budget);
+    reasoning_request.max_tokens = Some(model_config.reasoning_budget);
     reasoning_request.stream_options = Some(request::StreamOptions {
         include_usage: Some(true),
     });
@@ -365,7 +369,7 @@ pub(crate) async fn stream_chat_completion(
         send_delta_thinking_end(&sender, &outgoing_chunk).await?;
 
         let mut answer_request: ChatCompletionCreate = request.clone();
-        answer_request.model = model.to_string();
+        answer_request.model = model_config.model_name.to_string();
         answer_request
             .messages
             .push(request::Message::Assistant(message_assistant.clone()));
