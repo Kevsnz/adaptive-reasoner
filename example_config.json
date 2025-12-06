@@ -1,0 +1,16 @@
+{
+    "models": {
+        "gemipt-haiku-9k-low": {
+            "model_name": "gemipt-haiku-9k",
+            "api_url": "https://provider-enpoint.com/v1",
+            "api_key": "ENV_APY_KEY_1",
+            "reasoning_budget": 512
+        },
+        "gemipt-haiku-9k-high": {
+            "model_name": "gemipt-haiku-9k",
+            "api_url": "https://provider-enpoint.com/v1",
+            "api_key": "ENV_APY_KEY_2",
+            "reasoning_budget": 8192
+        }
+    }
+}
