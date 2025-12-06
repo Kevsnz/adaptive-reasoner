@@ -29,41 +29,37 @@ impl LLMClient {
             api_key: api_key.to_string(),
         }
     }
-    fn post(&self, url: &str) -> reqwest::RequestBuilder {
-        self.client
-            .post(format!("{}{}", self.base_url, url))
+    async fn request_chat_completion(
+        &self,
+        request: request::ChatCompletionCreate,
+        expected_content_type: mime::Mime,
+    ) -> Result<Response, Box<dyn std::error::Error>> {
+        let response = self
+            .client
+            .post(format!("{}{}", self.base_url, "/chat/completions"))
             .header("Authorization", format!("Bearer {}", self.api_key))
+            .json(&request)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+
+            return Err(format!("error: status {status}, text {text}").into());
+        }
+
+        let content_type: mime::Mime = response.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()?
+            .parse()?;
+        if content_type.essence_str() != expected_content_type.essence_str() {
+            return Err(
+                format!("content-type: {content_type}, expected: {expected_content_type}").into(),
+            );
+        }
+
+        Ok(response)
     }
-}
-
-async fn perform_request(
-    client: &LLMClient,
-    request: request::ChatCompletionCreate,
-    expected_content_type: mime::Mime,
-) -> Result<Response, Box<dyn std::error::Error>> {
-    let response = client
-        .post("/chat/completions")
-        .json(&request)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-
-        return Err(format!("error: status {status}, text {text}").into());
-    }
-
-    let content_type: mime::Mime = response.headers()[reqwest::header::CONTENT_TYPE]
-        .to_str()?
-        .parse()?;
-    if content_type.essence_str() != expected_content_type.essence_str() {
-        return Err(
-            format!("content-type: {content_type}, expected: {expected_content_type}").into(),
-        );
-    }
-
-    Ok(response)
 }
 
 pub(crate) async fn create_chat_completion(
@@ -94,7 +90,9 @@ pub(crate) async fn create_chat_completion(
     reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
     reasoning_request.max_tokens = Some(model_config.reasoning_budget);
 
-    let response = perform_request(client, reasoning_request, mime::APPLICATION_JSON).await?;
+    let response = client
+        .request_chat_completion(reasoning_request, mime::APPLICATION_JSON)
+        .await?;
 
     let reasoning_response = response.json::<response_direct::ChatCompletion>().await?;
     let reasoning_choice = match reasoning_response.choices.first() {
@@ -148,7 +146,9 @@ pub(crate) async fn create_chat_completion(
             .push(request::Message::Assistant(message_assistant.clone()));
         answer_request.max_tokens = Some(remaining_tokens);
 
-        let response = perform_request(client, answer_request, mime::APPLICATION_JSON).await?;
+        let response = client
+            .request_chat_completion(answer_request, mime::APPLICATION_JSON)
+            .await?;
 
         let answer_response = response.json::<response_direct::ChatCompletion>().await?;
         let answer_choice = match answer_response.choices.first() {
@@ -285,7 +285,9 @@ pub(crate) async fn stream_chat_completion(
     };
 
     // Reasoning stream
-    let mut response = perform_request(client, reasoning_request, mime::TEXT_EVENT_STREAM).await?;
+    let mut response = client
+        .request_chat_completion(reasoning_request, mime::TEXT_EVENT_STREAM)
+        .await?;
 
     let mut first_chunk = true;
     loop {
@@ -382,7 +384,9 @@ pub(crate) async fn stream_chat_completion(
             include_usage: Some(true),
         });
 
-        let mut response = perform_request(client, answer_request, mime::TEXT_EVENT_STREAM).await?;
+        let mut response = client
+            .request_chat_completion(answer_request, mime::TEXT_EVENT_STREAM)
+            .await?;
 
         loop {
             let chunk = match extract_chunk_from_event(response.chunk().await)? {
