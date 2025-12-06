@@ -1,11 +1,11 @@
 use actix_web::mime;
 use actix_web::web::Bytes;
 use reqwest::Error;
-use reqwest::Response;
 use tokio::sync::mpsc::Sender;
 
 use crate::config;
 use crate::consts;
+use crate::llm_client::LLMClient;
 use crate::models::FinishReason;
 use crate::models::Usage;
 use crate::models::request;
@@ -14,53 +14,6 @@ use crate::models::response_direct;
 use crate::models::response_direct::ChatCompletion;
 use crate::models::response_stream;
 use crate::models::response_stream::ChunkChoiceDelta;
-
-pub(crate) struct LLMClient {
-    client: reqwest::Client,
-    base_url: String,
-    api_key: String,
-}
-
-impl LLMClient {
-    pub(crate) fn new(client: reqwest::Client, base_url: &str, api_key: &str) -> Self {
-        Self {
-            client,
-            base_url: base_url.to_string(),
-            api_key: api_key.to_string(),
-        }
-    }
-    async fn request_chat_completion(
-        &self,
-        request: request::ChatCompletionCreate,
-        expected_content_type: mime::Mime,
-    ) -> Result<Response, Box<dyn std::error::Error>> {
-        let response = self
-            .client
-            .post(format!("{}{}", self.base_url, "/chat/completions"))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&request)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-
-            return Err(format!("error: status {status}, text {text}").into());
-        }
-
-        let content_type: mime::Mime = response.headers()[reqwest::header::CONTENT_TYPE]
-            .to_str()?
-            .parse()?;
-        if content_type.essence_str() != expected_content_type.essence_str() {
-            return Err(
-                format!("content-type: {content_type}, expected: {expected_content_type}").into(),
-            );
-        }
-
-        Ok(response)
-    }
-}
 
 pub(crate) async fn create_chat_completion(
     client: &LLMClient,
@@ -202,39 +155,6 @@ pub(crate) async fn create_chat_completion(
             total_tokens: prompt_tokens + reasoning_tokens + answer_tokens,
         },
     })
-}
-
-async fn send_data(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-    data: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let event_data = format!("data: {}\n\n", data);
-    if let Err(e) = sender.send(Ok(event_data.into())).await {
-        log::warn!("failed to send message: {:?}", e.0);
-        return Err("failed to send message".into());
-    }
-    Ok(())
-}
-
-async fn send_chunk(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-    chunk: &response_stream::ChatCompletionChunk,
-) -> Result<(), Box<dyn std::error::Error>> {
-    send_data(sender, serde_json::to_string(chunk).unwrap()).await
-}
-
-async fn send_delta(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-    mut chunk: response_stream::ChatCompletionChunk,
-    delta: response_stream::ChunkChoiceDelta,
-) -> Result<(), Box<dyn std::error::Error>> {
-    chunk.choices = vec![response_stream::ChunkChoice {
-        index: 0,
-        delta: delta,
-        logprobs: None,
-        finish_reason: None,
-    }];
-    send_chunk(&sender, &chunk).await
 }
 
 pub(crate) async fn stream_chat_completion(
@@ -478,6 +398,39 @@ fn extract_chunk_from_event(
         Err(e) => return Err(Box::new(e)),
     };
     Ok(Some(chunk))
+}
+
+async fn send_data(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    data: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let event_data = format!("data: {}\n\n", data);
+    if let Err(e) = sender.send(Ok(event_data.into())).await {
+        log::warn!("failed to send message: {:?}", e.0);
+        return Err("failed to send message".into());
+    }
+    Ok(())
+}
+
+async fn send_chunk(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    chunk: &response_stream::ChatCompletionChunk,
+) -> Result<(), Box<dyn std::error::Error>> {
+    send_data(sender, serde_json::to_string(chunk).unwrap()).await
+}
+
+async fn send_delta(
+    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    mut chunk: response_stream::ChatCompletionChunk,
+    delta: response_stream::ChunkChoiceDelta,
+) -> Result<(), Box<dyn std::error::Error>> {
+    chunk.choices = vec![response_stream::ChunkChoice {
+        index: 0,
+        delta: delta,
+        logprobs: None,
+        finish_reason: None,
+    }];
+    send_chunk(&sender, &chunk).await
 }
 
 #[cfg(reasoning)]

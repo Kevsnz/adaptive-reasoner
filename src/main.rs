@@ -1,5 +1,6 @@
 mod config;
 mod consts;
+mod llm_client;
 mod llm_request;
 mod models;
 
@@ -42,7 +43,7 @@ async fn chat_completion(
         }
     };
 
-    let client = llm_request::LLMClient::new(client, &model_config.api_url, &model_config.api_key);
+    let client = llm_client::LLMClient::new(client, &model_config.api_url, &model_config.api_key);
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
@@ -77,7 +78,7 @@ async fn main() -> std::io::Result<()> {
     let app_factory = move || {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::new(30, 0))
-            .read_timeout(Duration::new(10, 0))
+            .read_timeout(Duration::new(60, 0))
             .build()
             .unwrap();
 
