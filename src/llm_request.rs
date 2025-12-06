@@ -14,8 +14,6 @@ use crate::models::response_direct;
 use crate::models::response_direct::ChatCompletion;
 use crate::models::response_stream;
 use crate::models::response_stream::ChunkChoiceDelta;
-use std::io;
-use std::io::Write;
 
 pub(crate) struct LLMClient {
     client: reqwest::Client,
@@ -110,10 +108,16 @@ pub(crate) async fn create_chat_completion(
         None => "".to_string(),
     };
 
-    println!("   ***   Reasoning text: {}", reasoning_text);
-    println!(
-        "   ***   Reasoning usage: prompt_tokens: {}, reasoning_tokens: {}",
-        prompt_tokens, reasoning_tokens
+    log::debug!(
+        "Completion {} reasoning text: {}",
+        reasoning_response.id,
+        reasoning_text
+    );
+    log::debug!(
+        "Completion {} reasoning usage: prompt_tokens: {}, reasoning_tokens: {}",
+        reasoning_response.id,
+        prompt_tokens,
+        reasoning_tokens
     );
 
     let answer_text: String;
@@ -160,14 +164,25 @@ pub(crate) async fn create_chat_completion(
         answer_tokens = answer_response.usage.completion_tokens;
         finish_reason = answer_choice.finish_reason;
 
-        println!("   ***   Answer text: {}", answer_text);
-        println!("   ***   Answer usage: answer_tokens: {}", answer_tokens);
+        log::debug!(
+            "Completion {} answer text: {}",
+            reasoning_response.id,
+            answer_text
+        );
+        log::debug!(
+            "Completion {} answer usage: answer_tokens: {}",
+            reasoning_response.id,
+            answer_tokens
+        );
     } else {
         answer_text = "".to_string();
         answer_tool_calls = None;
         answer_tokens = 0;
         finish_reason = FinishReason::Length;
-        println!("   ***   Reasoning length exceeded, finishing without answer.");
+        log::debug!(
+            "Completion {} reasoning length exceeded, finishing without an answer.",
+            reasoning_response.id
+        );
     }
 
     Ok(ChatCompletion {
@@ -194,9 +209,8 @@ async fn send_data(
     data: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let event_data = format!("data: {}\n\n", data);
-    // println!("   ***   event_data: {:}", event_data);
     if let Err(e) = sender.send(Ok(event_data.into())).await {
-        println!("error: failed to send message: {:?}", e.0);
+        log::warn!("failed to send message: {:?}", e.0);
         return Err("failed to send message".into());
     }
     Ok(())
@@ -256,7 +270,6 @@ pub(crate) async fn stream_chat_completion(
     });
 
     let mut reasoning_text = "".to_string();
-    let mut answer_text = "".to_string();
     let mut prompt_tokens = 0;
     let mut reasoning_tokens = 0;
     let mut answer_tokens = 0;
@@ -275,13 +288,11 @@ pub(crate) async fn stream_chat_completion(
     let mut response = perform_request(client, reasoning_request, mime::TEXT_EVENT_STREAM).await?;
 
     let mut first_chunk = true;
-    print!("   ***   Reasoning text:");
     loop {
         let chunk = match extract_chunk_from_event(response.chunk().await)? {
             Some(chunk) => chunk,
             None => break,
         };
-        // println!("   ***   chunk: {:?}", chunk);
 
         outgoing_chunk.id = chunk.id.clone();
         outgoing_chunk.created = chunk.created;
@@ -312,8 +323,11 @@ pub(crate) async fn stream_chat_completion(
 
         if let Some(content) = reasoning_choice.delta.content.clone() {
             reasoning_text = format!("{}{}", reasoning_text, content);
-            print!("{content:}");
-            io::stdout().flush().unwrap();
+            log::debug!(
+                "Completion {} reasoning content delta: \"{}\"",
+                outgoing_chunk.id,
+                content
+            );
 
             send_delta(
                 &sender,
@@ -323,11 +337,12 @@ pub(crate) async fn stream_chat_completion(
             .await?;
         }
     }
-    println!();
 
-    println!(
-        "   ***   Reasoning usage: prompt_tokens: {}, reasoning_tokens: {}",
-        prompt_tokens, reasoning_tokens
+    log::debug!(
+        "Completion {} reasoning usage: prompt_tokens: {}, reasoning_tokens: {}",
+        outgoing_chunk.id,
+        prompt_tokens,
+        reasoning_tokens
     );
 
     // Answer stream
@@ -369,7 +384,6 @@ pub(crate) async fn stream_chat_completion(
 
         let mut response = perform_request(client, answer_request, mime::TEXT_EVENT_STREAM).await?;
 
-        print!("   ***   Answer text: ");
         loop {
             let chunk = match extract_chunk_from_event(response.chunk().await)? {
                 Some(chunk) => chunk,
@@ -386,16 +400,21 @@ pub(crate) async fn stream_chat_completion(
             };
 
             if let Some(content) = answer_choice.delta.content.clone() {
-                answer_text = format!("{}{}", answer_text, content);
-                print!("{content:}");
-                io::stdout().flush().unwrap();
+                log::debug!(
+                    "Completion {} answer content delta: \"{}\"",
+                    outgoing_chunk.id,
+                    content
+                );
             }
             outgoing_chunk.choices = vec![answer_choice.clone()];
             send_chunk(&sender, &outgoing_chunk).await?;
         }
-        println!();
 
-        println!("   ***   Answer usage: answer_tokens: {answer_tokens:}");
+        log::debug!(
+            "Completion {} answer usage: answer_tokens: {}",
+            outgoing_chunk.id,
+            answer_tokens
+        );
     } else {
         outgoing_chunk.choices = vec![response_stream::ChunkChoice {
             index: 0,
@@ -403,6 +422,10 @@ pub(crate) async fn stream_chat_completion(
             logprobs: None,
             finish_reason: Some(FinishReason::Length),
         }];
+        log::debug!(
+            "Completion {} reasoning length exceeded, finishing without an answer.",
+            outgoing_chunk.id
+        );
         send_chunk(&sender, &outgoing_chunk).await?;
     }
 

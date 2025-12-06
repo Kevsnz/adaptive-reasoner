@@ -37,13 +37,13 @@ async fn chat_completion(
     let model_config = match config.models.get(&request.0.model).cloned() {
         Some(model_config) => model_config,
         None => {
-            println!("error: invalid model name");
+            log::info!("error: model not found: {:?}", request.0.model);
             return actix_web::HttpResponse::BadRequest().finish();
         }
     };
 
     let client = llm_request::LLMClient::new(client, &model_config.api_url, &model_config.api_key);
-    // println!("   ***   Request: {:?}\n   ***   ", request.0);
+    log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
         let (sender, receiver) = mpsc::channel::<Result<Bytes, Box<dyn std::error::Error>>>(100);
@@ -59,7 +59,7 @@ async fn chat_completion(
     match llm_request::create_chat_completion(&client, request.0, &model_config).await {
         Ok(chat_completion) => actix_web::HttpResponse::Ok().json(chat_completion),
         Err(e) => {
-            println!("error: {:?}", e);
+            log::error!("create_chat_completion error: {:?}", e);
             actix_web::HttpResponse::BadGateway().finish()
         }
     }
@@ -67,11 +67,10 @@ async fn chat_completion(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    println!("Welcome!");
-
     dotenv::dotenv().ok();
-
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
+    log::info!("Initializing Adaptive Reasoner service...");
+
     let model_config = config::load_config();
     let data = Data::from(Arc::new(model_config));
 
@@ -79,7 +78,8 @@ async fn main() -> std::io::Result<()> {
         let client = reqwest::Client::builder()
             .connect_timeout(Duration::new(30, 0))
             .read_timeout(Duration::new(10, 0))
-            .build();
+            .build()
+            .unwrap();
 
         let router = actix_web::web::scope("/v1")
             .route("/models", actix_web::web::get().to(models))
@@ -91,7 +91,7 @@ async fn main() -> std::io::Result<()> {
         actix_web::App::new()
             .wrap(Logger::default())
             .app_data(ThinData(client))
-            .app_data(Data::clone(&data))
+            .app_data(data.clone())
             .service(router)
     };
 
