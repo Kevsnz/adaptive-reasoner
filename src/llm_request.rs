@@ -326,7 +326,7 @@ pub(crate) async fn stream_chat_completion(
         if let Some(content) = reasoning_choice.delta.content.clone() {
             reasoning_text = format!("{}{}", reasoning_text, content);
             log::debug!(
-                "Completion {} reasoning content delta: \"{}\"",
+                "Completion {} reasoning content delta: {:?}",
                 outgoing_chunk.id,
                 content
             );
@@ -405,7 +405,7 @@ pub(crate) async fn stream_chat_completion(
 
             if let Some(content) = answer_choice.delta.content.clone() {
                 log::debug!(
-                    "Completion {} answer content delta: \"{}\"",
+                    "Completion {} answer content delta: {:?}",
                     outgoing_chunk.id,
                     content
                 );
