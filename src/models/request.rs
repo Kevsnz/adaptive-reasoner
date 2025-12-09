@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{self, Deserialize, Serialize};
 use serde_json::Value;
 
@@ -108,6 +110,8 @@ pub(crate) struct ChatCompletionCreate {
     pub(crate) tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub(crate) tool_choice: Option<ToolChoice>,
+    #[serde(flatten, skip_deserializing, default)]
+    pub(crate) extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -43,7 +43,12 @@ async fn chat_completion(
         }
     };
 
-    let client = llm_client::LLMClient::new(client, &model_config.api_url, &model_config.api_key);
+    let client = llm_client::LLMClient::new(
+        client,
+        &model_config.api_url,
+        &model_config.api_key,
+        &model_config.extra,
+    );
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {

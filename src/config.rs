@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct ModelConfig {
@@ -8,6 +9,7 @@ pub(crate) struct ModelConfig {
     pub(crate) api_url: String,
     pub(crate) api_key: String,
     pub(crate) reasoning_budget: i32,
+    pub(crate) extra: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
