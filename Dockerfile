@@ -1,10 +1,13 @@
 FROM rust:1.91-slim-bullseye AS builder
 
 RUN apt-get update \
-    && apt-get upgrade \
     && apt-get install -y pkg-config libssl-dev
 
 WORKDIR /app/src
+
+COPY Cargo.toml .
+COPY Cargo.lock .
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
 COPY . .
 
