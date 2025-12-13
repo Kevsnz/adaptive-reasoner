@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use actix_web::mime;
 use actix_web::web::Bytes;
 use reqwest::Error;
@@ -13,6 +15,7 @@ use crate::models::request::ChatCompletionCreate;
 use crate::models::response_direct;
 use crate::models::response_direct::ChatCompletion;
 use crate::models::response_stream;
+use crate::models::response_stream::ChatCompletionChunk;
 use crate::models::response_stream::ChunkChoiceDelta;
 
 pub(crate) async fn create_chat_completion(
@@ -210,10 +213,17 @@ pub(crate) async fn stream_chat_completion(
         .await?;
 
     let mut first_chunk = true;
+    let mut chunks_to_process: VecDeque<ChatCompletionChunk> = VecDeque::new();
     loop {
-        let chunk = match extract_chunk_from_event(response.chunk().await)? {
+        if chunks_to_process.len() == 0 {
+            match extract_chunks_from_event(response.chunk().await)? {
+                Some(chunks) => chunks_to_process.extend(chunks),
+                None => break,
+            };
+        }
+        let chunk = match chunks_to_process.pop_front() {
             Some(chunk) => chunk,
-            None => break,
+            None => continue,
         };
 
         outgoing_chunk.id = chunk.id.clone();
@@ -308,10 +318,17 @@ pub(crate) async fn stream_chat_completion(
             .request_chat_completion(answer_request, mime::TEXT_EVENT_STREAM)
             .await?;
 
+        let mut chunks_to_process: VecDeque<ChatCompletionChunk> = VecDeque::new();
         loop {
-            let chunk = match extract_chunk_from_event(response.chunk().await)? {
+            if chunks_to_process.len() == 0 {
+                match extract_chunks_from_event(response.chunk().await)? {
+                    Some(chunks) => chunks_to_process.extend(chunks),
+                    None => break,
+                };
+            }
+            let chunk = match chunks_to_process.pop_front() {
                 Some(chunk) => chunk,
-                None => break,
+                None => continue,
             };
 
             if let Some(usage) = chunk.usage {
@@ -370,34 +387,53 @@ pub(crate) async fn stream_chat_completion(
     Ok(())
 }
 
-fn extract_chunk_from_event(
+fn extract_chunks_from_event(
     response_event: Result<Option<Bytes>, Error>,
-) -> Result<Option<response_stream::ChatCompletionChunk>, Box<dyn std::error::Error>> {
-    let event = match response_event {
+) -> Result<Option<Vec<response_stream::ChatCompletionChunk>>, Box<dyn std::error::Error>> {
+    let events = match response_event {
         Ok(Some(chunk)) => chunk,
-        Ok(None) => return Ok(None),
-        Err(e) => return Err(Box::new(e)),
+        Ok(None) => {
+            log::debug!("extract_chunks_from_event: No more chunks");
+            return Ok(None);
+        }
+        Err(e) => {
+            log::debug!("extract_chunks_from_event: Error reading events: {e}");
+            return Err(Box::new(e));
+        }
     };
 
-    let text = match str::from_utf8(&event) {
-        Ok(text) => text,
-        Err(e) => return Err(Box::new(e)),
+    let text = match str::from_utf8(&events) {
+        Ok(text) => text.trim(),
+        Err(e) => {
+            log::debug!("extract_chunks_from_event: Error decoding events: {e}");
+            return Err(Box::new(e));
+        }
     };
 
-    if !text.starts_with("data: ") {
-        return Ok(None); // TODO: Invent something to skip the chunk instead of ending the stream
+    let mut chunks = vec![];
+    for text_chunk in text.split("\n\n") {
+        if !text_chunk.starts_with("data: ") {
+            log::debug!("extract_chunks_from_event: Skipping chunk: {text_chunk}");
+            continue;
+        }
+
+        let text_chunk = &text_chunk["data:".len()..].trim();
+        if text_chunk.contains("[DONE]") {
+            log::debug!("extract_chunks_from_event: Final chunk received");
+            return Ok(None);
+        }
+
+        let chunk = match serde_json::from_str::<response_stream::ChatCompletionChunk>(text_chunk) {
+            Ok(json) => json,
+            Err(e) => {
+                log::debug!("extract_chunks_from_event: Error parsing chunk: {e}");
+                return Err(Box::new(e));
+            }
+        };
+        chunks.push(chunk);
     }
 
-    let text = &text["data:".len()..].trim();
-    if text.contains("[DONE]") {
-        return Ok(None);
-    }
-
-    let chunk = match serde_json::from_str::<response_stream::ChatCompletionChunk>(text) {
-        Ok(json) => json,
-        Err(e) => return Err(Box::new(e)),
-    };
-    Ok(Some(chunk))
+    Ok(Some(chunks))
 }
 
 async fn send_data(
