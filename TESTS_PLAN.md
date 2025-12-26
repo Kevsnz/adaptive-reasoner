@@ -8,14 +8,14 @@ This document outlines a sequence of interdependent atomic steps to make the Ada
 
 ## Phase 1: Foundation Setup
 
-### Step 1: Add test dependencies to Cargo.toml
+### Step 1: Add test dependencies to Cargo.toml [✓ COMPLETED]
 Add the following dependencies under `[dev-dependencies]`:
 - `tokio-test` - Async test utilities
 - `thiserror` - Structured error types
 - `wiremock` - HTTP mocking for integration tests
 - `reqwest = { version = "0.12", features = ["json"] }` - For test clients
 
-### Step 2: Create concrete error types in new `src/errors.rs` module
+### Step 2: Create concrete error types in new `src/errors.rs` module [✓ COMPLETED]
 - Define `ReasonerError` enum with variants:
   - `ValidationError(String)`
   - `ApiError(String)`
@@ -30,20 +30,20 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 2: Extract Pure Functions
 
-### Step 3: Extract validation logic from `llm_request.rs` into pure functions
+### Step 3: Extract validation logic from `llm_request.rs` into pure functions [✓ COMPLETED]
 - Create `validate_chat_request(&ChatCompletionCreate) -> Result<(), ReasonerError>`
 - Move empty messages check (llm_request.rs:26-28, 169-171) into this function
 - Move assistant message check (llm_request.rs:29-33, 172-176) into this function
 - Return early validation errors without async context
 - Update both `create_chat_completion()` and `stream_chat_completion()` to use this function
 
-### Step 4: Extract token calculation logic into pure functions
+### Step 4: Extract token calculation logic into pure functions [✓ COMPLETED]
 - Create `calculate_remaining_tokens(max_tokens: Option<i32>, reasoning_tokens: i32) -> i32`
 - Add `DEFAULT_MAX_TOKENS: i32 = 1024 * 1024` constant in `src/consts.rs`
 - Replace hardcoded `1024 * 1024` in llm_request.rs:81 with the constant
 - Use the new function in both streaming (llm_request.rs:281) and non-streaming (llm_request.rs:81) paths
 
-### Step 5: Extract message construction logic into pure functions
+### Step 5: Extract message construction logic into pure functions [✓ COMPLETED]
 - Create `build_reasoning_request(request: ChatCompletionCreate, model_config: &ModelConfig) -> ChatCompletionCreate`
   - Move assistant message setup logic (llm_request.rs:35-46, 178-193)
   - Set stop sequence to `THINK_END`
@@ -57,7 +57,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 3: Create Abstraction Traits
 
-### Step 6: Create `LLMClientTrait` in new `src/llm_client/mod.rs`
+### Step 6: Create `LLMClientTrait` in new `src/llm_client/mod.rs` [✓ COMPLETED]
 - Define trait:
   ```rust
   #[async_trait::async_trait]
@@ -71,14 +71,14 @@ Add the following dependencies under `[dev-dependencies]`:
   ```
 - Add `async-trait` dependency to Cargo.toml
 
-### Step 7: Make `LLMClient` implement `LLMClientTrait`
+### Step 7: Make `LLMClient` implement `LLMClientTrait` [✓ COMPLETED]
 - Refactor `src/llm_client.rs` to `impl LLMClientTrait for LLMClient`
 - Update error handling to return `ReasonerError` instead of `Box<dyn std::error::Error>`
 - Convert status code errors to `ReasonerError::ApiError`
 - Convert parsing errors to `ReasonerError::ParseError`
 - Keep all existing HTTP logic intact
 
-### Step 8: Create `ConfigLoaderTrait` in `src/config/mod.rs`
+### Step 8: Create `ConfigLoaderTrait` in `src/config/mod.rs` [✓ COMPLETED]
 - Define trait:
   ```rust
   pub trait ConfigLoader: Send + Sync {
