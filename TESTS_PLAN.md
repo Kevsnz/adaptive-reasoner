@@ -108,7 +108,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Store trait object instead of concrete `LLMClient` type
 - Accept `ModelConfig` as parameter in methods rather than storing it
 
-### Step 10: Move core reasoning logic to service methods
+### Step 10: Move core reasoning logic to service methods [✓ COMPLETED]
 - Create `ReasoningService::create_completion(&self, request: ChatCompletionCreate, model_config: &ModelConfig) -> Result<ChatCompletion, ReasonerError>`
   - Move logic from `llm_request::create_chat_completion()`
   - Use extracted helper functions (Steps 3-5)
