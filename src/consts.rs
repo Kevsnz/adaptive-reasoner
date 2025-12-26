@@ -3,3 +3,5 @@ pub(crate) const THINK_END: &str = "</think>";
 
 pub(crate) const REASONING_CUTOFF_STUB: &str =
     "Right, this is taking too long... Time to write the answer.";
+
+pub(crate) const DEFAULT_MAX_TOKENS: i32 = 1024 * 1024;

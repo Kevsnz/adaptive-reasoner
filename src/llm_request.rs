@@ -19,6 +19,10 @@ use crate::models::response_stream;
 use crate::models::response_stream::ChatCompletionChunk;
 use crate::models::response_stream::ChunkChoiceDelta;
 
+pub(crate) fn calculate_remaining_tokens(max_tokens: Option<i32>, reasoning_tokens: i32) -> i32 {
+    max_tokens.unwrap_or(consts::DEFAULT_MAX_TOKENS) - reasoning_tokens
+}
+
 pub(crate) fn validate_chat_request(request: &request::ChatCompletionCreate) -> Result<(), ReasonerError> {
     if request.messages.is_empty() {
         return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
@@ -88,7 +92,7 @@ pub(crate) async fn create_chat_completion(
     let answer_tool_calls: Option<Vec<serde_json::Value>>;
     let answer_tokens: i32;
     let finish_reason: FinishReason;
-    let remaining_tokens = request.max_tokens.unwrap_or(1024 * 1024) - reasoning_tokens;
+    let remaining_tokens = calculate_remaining_tokens(request.max_tokens, reasoning_tokens);
     if remaining_tokens > 0 {
         if let FinishReason::Length = reasoning_choice.finish_reason {
             reasoning_text = format!(
@@ -285,7 +289,7 @@ pub(crate) async fn stream_chat_completion(
     );
 
     // Answer stream
-    let remaining_tokens = request.max_tokens.unwrap_or(1024 * 1024) - reasoning_tokens;
+    let remaining_tokens = calculate_remaining_tokens(request.max_tokens, reasoning_tokens);
     if remaining_tokens > 0 {
         if let FinishReason::Length = reasoning_finish_reason {
             reasoning_text = format!(
