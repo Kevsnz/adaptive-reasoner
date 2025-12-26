@@ -8,7 +8,7 @@ use tokio::sync::mpsc::Sender;
 use crate::config;
 use crate::consts;
 use crate::errors::ReasonerError;
-use crate::llm_client::LLMClient;
+use crate::llm_client::{LLMClient, LLMClientTrait};
 use crate::models::FinishReason;
 use crate::models::Usage;
 use crate::models::request;
@@ -71,9 +71,13 @@ pub(crate) fn build_answer_request(
     answer_request
 }
 
-pub(crate) fn validate_chat_request(request: &request::ChatCompletionCreate) -> Result<(), ReasonerError> {
+pub(crate) fn validate_chat_request(
+    request: &request::ChatCompletionCreate,
+) -> Result<(), ReasonerError> {
     if request.messages.is_empty() {
-        return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
+        return Err(ReasonerError::ValidationError(
+            "error: empty messages".to_string(),
+        ));
     }
     if let request::Message::Assistant(_) = request.messages.last().unwrap() {
         return Err(ReasonerError::ValidationError(
@@ -102,7 +106,7 @@ pub(crate) async fn create_chat_completion(
         None => {
             return Err(ReasonerError::ApiError(
                 "error: no reasoning response".to_string(),
-            ))
+            ));
         }
     };
     let prompt_tokens = reasoning_response.usage.prompt_tokens;
@@ -155,7 +159,7 @@ pub(crate) async fn create_chat_completion(
             None => {
                 return Err(ReasonerError::ApiError(
                     "error: no answer response".to_string(),
-                ))
+                ));
             }
         };
 
@@ -465,7 +469,9 @@ async fn send_data(
     let event_data = format!("data: {}\n\n", data);
     if let Err(e) = sender.send(Ok(event_data.into())).await {
         log::warn!("failed to send message: {:?}", e.0);
-        return Err(ReasonerError::NetworkError("failed to send message".to_string()));
+        return Err(ReasonerError::NetworkError(
+            "failed to send message".to_string(),
+        ));
     }
     Ok(())
 }

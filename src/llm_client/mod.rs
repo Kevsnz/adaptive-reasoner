@@ -1,11 +1,21 @@
 use std::collections::HashMap;
 
 use actix_web::mime;
+use async_trait::async_trait;
 use reqwest::Response;
 use serde_json::Value;
 
 use crate::errors::ReasonerError;
 use crate::models::request;
+
+#[async_trait]
+pub trait LLMClientTrait: Send + Sync {
+    async fn request_chat_completion(
+        &self,
+        request: request::ChatCompletionCreate,
+        expected_content_type: mime::Mime,
+    ) -> Result<Response, ReasonerError>;
+}
 
 pub(crate) struct LLMClient {
     client: reqwest::Client,
@@ -28,7 +38,11 @@ impl LLMClient {
             extra_body: extra_body.clone(),
         }
     }
-    pub(crate) async fn request_chat_completion(
+}
+
+#[async_trait]
+impl LLMClientTrait for LLMClient {
+    async fn request_chat_completion(
         &self,
         mut request: request::ChatCompletionCreate,
         expected_content_type: mime::Mime,
