@@ -1,0 +1,39 @@
+# Adaptive Reasoner Project Map
+
+Adaptive Reasoner is a Rust-based HTTP service that implements adaptive reasoning for large language models (LLMs). The service acts as a proxy between clients and upstream LLM APIs, limiting the amount of reasoning tokens a model can generate before producing its final answer. This approach helps control costs and response times for reasoning-intensive models. The service exposes OpenAI-compatible endpoints on port 8080, supporting both streaming and non-streaming modes, and can be configured to output reasoning tokens either inline within content or as a separate `reasoning_content` field.
+
+## Configuration Management
+
+The configuration system is responsible for loading model configurations from a JSON file specified by the `AR_CONFIG_FILE` environment variable (defaulting to `./config.json`). The configuration module defines the core data structures and loading logic. The `Config` structure contains a HashMap mapping served model names to their configurations, while `ModelConfig` captures the parameters for each model including the source model name, API base URL, API key environment variable name, maximum reasoning budget, and optional extra parameters. The `load_config()` function reads and parses the configuration file, then resolves API keys by reading them from environment variables. This flexible configuration allows the service to serve multiple model configurations simultaneously, each potentially pointing to different upstream providers with different reasoning budget limits.
+
+**Source files:** `src/config.rs`, `example_config.json`
+
+## HTTP API Server
+
+The HTTP server is built using the actix-web framework and exposes OpenAI-compatible endpoints for model listing and chat completion requests. The `main()` function initializes the service by loading the configuration, setting up logging with env_logger, and creating an HTTP server that listens on 0.0.0.0:8080. The server registers two routes under `/v1`: a GET endpoint at `/models` that returns a list of available models, and a POST endpoint at `/chat/completions` that handles chat completion requests. The `models()` handler iterates through the configured models and constructs a model list response with metadata including model IDs and ownership information. The `chat_completion()` handler is the core request processor, extracting model configurations, creating LLM client instances, and dispatching either streaming or non-streaming requests based on the request parameters. The server uses middleware for request logging and manages request timeouts with 30-second connection timeouts and 60-second read timeouts.
+
+**Source files:** `src/main.rs`
+
+## LLM Client
+
+The LLM client module provides a thin wrapper around the reqwest HTTP client for making requests to upstream LLM APIs. The `LLMClient` struct encapsulates a reqwest client instance, the base URL for the upstream API, an API key for authentication, and optional extra body parameters that should be included in all requests. The client's `request_chat_completion()` method constructs and sends POST requests to the `/chat/completions` endpoint, including the Authorization header with a bearer token, the request body as JSON, and proper content type handling. This method performs error checking by verifying HTTP status codes and ensuring the response content type matches expectations (either `application/json` for non-streaming or `text/event-stream` for streaming). The client supports passing through any additional parameters that might be required by specific upstream providers, making it adaptable to various LLM API implementations.
+
+**Source files:** `src/llm_client.rs`
+
+## Request and Response Models
+
+The models module defines the comprehensive data structures for OpenAI-compatible request and response formats. The request structures include `ChatCompletionCreate` which captures parameters like model name, messages array, max tokens, stop sequences, streaming options, tools, and tool choice preferences. Messages support multiple roles (system, user, assistant, tool) and flexible content types including plain text or structured arrays with text and image URLs. The response models are split into two variants: `response_direct` for non-streaming responses containing complete `ChatCompletion` objects with choices, usage statistics, and finish reasons, and `response_stream` for streaming responses containing `ChatCompletionChunk` objects with incremental deltas. The streaming delta structure is particularly important as it can contain either a separate `reasoning_content` field (when the `reasoning` feature flag is enabled) or inline content within the main content field. The models also support conditional compilation through the `reasoning` feature flag, which controls whether reasoning content appears in a dedicated field or is embedded within the main content using special `think` tags.
+
+**Source files:** `src/models/mod.rs`, `src/models/request.rs`, `src/models/response_direct.rs`, `src/models/response_stream.rs`, `src/models/model_list.rs`, `src/consts.rs`
+
+## Adaptive Reasoning Logic
+
+The adaptive reasoning logic is the core innovation of this service, implemented in the `llm_request` module. This logic splits the chat completion process into two distinct phases: a reasoning phase and an answer phase. For non-streaming requests, the `create_chat_completion()` function first constructs a reasoning request by appending an assistant message with an opening `think` tag to the conversation history, setting a stop sequence at the closing `think` tag, and limiting max tokens to the configured reasoning budget. The reasoning response is then parsed, and if it hit the length limit, a cutoff stub is appended. The service then constructs an answer request containing the full reasoning content wrapped in `think` tags, calculates remaining tokens from the original request's max tokens, and requests the final answer. For streaming requests, `stream_chat_completion()` follows the same two-phase approach but processes chunks incrementally. It streams reasoning deltas to the client as they arrive from the upstream API, then transitions to streaming the answer. The streaming implementation carefully manages chunk parsing, event extraction from Server-Sent Events (SSE), and proper delta construction. Throughout both modes, the service accumulates usage statistics (prompt tokens, reasoning tokens, and answer tokens) and combines them in the final response. The logic handles edge cases like empty messages, partial assistant responses, and situations where the reasoning budget exceeds the available max tokens.
+
+**Source files:** `src/llm_request.rs`
+
+## Build Configuration
+
+The build system controls an important feature flag that affects how reasoning content is delivered to clients. The `build.rs` script currently has the `reasoning` configuration commented out, meaning the default behavior is to embed reasoning content inline using special XML-style `think` tags within the main content field. When the `reasoning` flag is enabled (by uncommenting the appropriate line in build.rs), the service instead uses a dedicated `reasoning_content` field in the response objects. This compile-time configuration affects both the request/response model structures (through conditional compilation attributes like `#[cfg(reasoning)]`) and the behavior of functions that construct and send response chunks. The feature flag also controls the inclusion of the `reasoning_content` field in streaming deltas and determines whether the closing `think` tag is sent as a separate chunk or included in the content. This dual-mode support allows the service to be compiled for different client preferences and API compatibility requirements without runtime configuration changes.
+
+**Source files:** `build.rs`, `Cargo.toml`
