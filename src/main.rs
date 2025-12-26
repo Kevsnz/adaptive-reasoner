@@ -4,6 +4,7 @@ mod errors;
 mod llm_client;
 mod llm_request;
 mod models;
+mod service;
 
 use actix_web::web::{Bytes, Data, ThinData};
 use actix_web::{middleware::Logger, mime};

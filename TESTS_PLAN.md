@@ -92,7 +92,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 4: Extract Service Layer
 
-### Step 9: Create `ReasoningService` struct in new `src/service/mod.rs`
+### Step 9: Create `ReasoningService` struct in new `src/service/mod.rs` [✓ COMPLETED]
 - Define struct:
   ```rust
   pub struct ReasoningService {
