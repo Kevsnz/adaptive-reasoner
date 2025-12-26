@@ -23,6 +23,54 @@ pub(crate) fn calculate_remaining_tokens(max_tokens: Option<i32>, reasoning_toke
     max_tokens.unwrap_or(consts::DEFAULT_MAX_TOKENS) - reasoning_tokens
 }
 
+pub(crate) fn build_reasoning_request(
+    request: request::ChatCompletionCreate,
+    model_config: &config::ModelConfig,
+) -> ChatCompletionCreate {
+    let mut reasoning_request: ChatCompletionCreate = request.clone();
+    reasoning_request.model = model_config.model_name.to_string();
+
+    let message_assistant = request::MessageAssistant {
+        reasoning_content: None,
+        content: Some(consts::THINK_START.to_string()),
+        tool_calls: None,
+    };
+    reasoning_request
+        .messages
+        .push(request::Message::Assistant(message_assistant));
+    reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
+    reasoning_request.max_tokens = Some(model_config.reasoning_budget);
+
+    reasoning_request
+}
+
+pub(crate) fn build_answer_request(
+    request: request::ChatCompletionCreate,
+    model_config: &config::ModelConfig,
+    reasoning_text: &str,
+    max_tokens: i32,
+) -> ChatCompletionCreate {
+    let mut answer_request: ChatCompletionCreate = request.clone();
+    answer_request.model = model_config.model_name.to_string();
+
+    let message_assistant = request::MessageAssistant {
+        reasoning_content: None,
+        content: Some(format!(
+            "{}{}{}",
+            consts::THINK_START,
+            reasoning_text,
+            consts::THINK_END,
+        )),
+        tool_calls: None,
+    };
+    answer_request
+        .messages
+        .push(request::Message::Assistant(message_assistant));
+    answer_request.max_tokens = Some(max_tokens);
+
+    answer_request
+}
+
 pub(crate) fn validate_chat_request(request: &request::ChatCompletionCreate) -> Result<(), ReasonerError> {
     if request.messages.is_empty() {
         return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
@@ -42,19 +90,7 @@ pub(crate) async fn create_chat_completion(
 ) -> Result<response_direct::ChatCompletion, ReasonerError> {
     validate_chat_request(&request)?;
 
-    let mut message_assistant = request::MessageAssistant {
-        reasoning_content: None,
-        content: Some(consts::THINK_START.to_string()),
-        tool_calls: None,
-    };
-
-    let mut reasoning_request: ChatCompletionCreate = request.clone();
-    reasoning_request.model = model_config.model_name.to_string();
-    reasoning_request
-        .messages
-        .push(request::Message::Assistant(message_assistant.clone()));
-    reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
-    reasoning_request.max_tokens = Some(model_config.reasoning_budget);
+    let reasoning_request = build_reasoning_request(request.clone(), model_config);
 
     let response = client
         .request_chat_completion(reasoning_request, mime::APPLICATION_JSON)
@@ -102,19 +138,12 @@ pub(crate) async fn create_chat_completion(
             );
         }
 
-        message_assistant.content = Some(format!(
-            "{}{}{}",
-            consts::THINK_START,
-            reasoning_text,
-            consts::THINK_END,
-        ));
-
-        let mut answer_request: ChatCompletionCreate = request.clone();
-        answer_request.model = model_config.model_name.to_string();
-        answer_request
-            .messages
-            .push(request::Message::Assistant(message_assistant.clone()));
-        answer_request.max_tokens = Some(remaining_tokens);
+        let answer_request = build_answer_request(
+            request.clone(),
+            model_config,
+            &reasoning_text,
+            remaining_tokens,
+        );
 
         let response = client
             .request_chat_completion(answer_request, mime::APPLICATION_JSON)
@@ -186,19 +215,7 @@ pub(crate) async fn stream_chat_completion(
 ) -> Result<(), ReasonerError> {
     validate_chat_request(&request)?;
 
-    let mut message_assistant = request::MessageAssistant {
-        reasoning_content: None,
-        content: Some(consts::THINK_START.to_string()),
-        tool_calls: None,
-    };
-
-    let mut reasoning_request: ChatCompletionCreate = request.clone();
-    reasoning_request.model = model_config.model_name.to_string();
-    reasoning_request
-        .messages
-        .push(request::Message::Assistant(message_assistant.clone()));
-    reasoning_request.stop = Some(vec![consts::THINK_END.to_string()]);
-    reasoning_request.max_tokens = Some(model_config.reasoning_budget);
+    let mut reasoning_request = build_reasoning_request(request.clone(), model_config);
     reasoning_request.stream_options = Some(request::StreamOptions {
         include_usage: Some(true),
     });
@@ -307,20 +324,14 @@ pub(crate) async fn stream_chat_completion(
             .await?;
         }
 
-        message_assistant.content = Some(format!(
-            "{}{}{}",
-            consts::THINK_START,
-            reasoning_text,
-            consts::THINK_END,
-        ));
         send_delta_thinking_end(&sender, &outgoing_chunk).await?;
 
-        let mut answer_request: ChatCompletionCreate = request.clone();
-        answer_request.model = model_config.model_name.to_string();
-        answer_request
-            .messages
-            .push(request::Message::Assistant(message_assistant.clone()));
-        answer_request.max_tokens = Some(remaining_tokens);
+        let mut answer_request = build_answer_request(
+            request.clone(),
+            model_config,
+            &reasoning_text,
+            remaining_tokens,
+        );
         answer_request.stream_options = Some(request::StreamOptions {
             include_usage: Some(true),
         });
