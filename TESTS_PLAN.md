@@ -119,7 +119,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Use extracted helper functions
   - Update error handling throughout
 
-### Step 11: Update `llm_request.rs` to use service layer
+### Step 11: Update `llm_request.rs` to use service layer [✓ COMPLETED]
 - Refactor `create_chat_completion()` to delegate to `ReasoningService::create_completion()`
 - Refactor `stream_chat_completion()` to delegate to `ReasoningService::stream_completion()`
 - Keep module as thin adapter between HTTP layer and service

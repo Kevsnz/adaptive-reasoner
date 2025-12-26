@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::errors::ReasonerError;
+use crate::llm_client::{LLMClient, LLMClientTrait};
 use crate::models::{model_list, request};
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,18 +47,18 @@ async fn chat_completion(
         }
     };
 
-    let client = llm_client::LLMClient::new(
+    let client: Box<dyn LLMClientTrait> = Box::new(LLMClient::new(
         client,
         &model_config.api_url,
         &model_config.api_key,
         &model_config.extra,
-    );
+    ));
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
         let (sender, receiver) = mpsc::channel::<Result<Bytes, ReasonerError>>(100);
         actix_web::rt::spawn(async move {
-            if let Err(e) = llm_request::stream_chat_completion(&client, request.0, &model_config, sender).await {
+            if let Err(e) = llm_request::stream_chat_completion(client, request.0, &model_config, sender).await {
                 log::error!("stream_chat_completion error: {:?}", e);
             }
         });
@@ -67,7 +68,7 @@ async fn chat_completion(
             .streaming(ReceiverStream::new(receiver));
     }
 
-    match llm_request::create_chat_completion(&client, request.0, &model_config).await {
+    match llm_request::create_chat_completion(client, request.0, &model_config).await {
         Ok(chat_completion) => actix_web::HttpResponse::Ok().json(chat_completion),
         Err(e) => {
             log::error!("create_chat_completion error: {:?}", e);

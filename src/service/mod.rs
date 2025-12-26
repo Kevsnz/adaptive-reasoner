@@ -15,7 +15,6 @@ use crate::llm_request::{
 use crate::models::FinishReason;
 use crate::models::Usage;
 use crate::models::request;
-use crate::models::request::ChatCompletionCreate;
 use crate::models::response_direct;
 use crate::models::response_direct::ChatCompletion;
 use crate::models::response_stream;
