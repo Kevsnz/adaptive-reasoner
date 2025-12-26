@@ -19,12 +19,8 @@ use crate::models::response_stream;
 use crate::models::response_stream::ChatCompletionChunk;
 use crate::models::response_stream::ChunkChoiceDelta;
 
-pub(crate) async fn create_chat_completion(
-    client: &LLMClient,
-    request: request::ChatCompletionCreate,
-    model_config: &config::ModelConfig,
-) -> Result<response_direct::ChatCompletion, ReasonerError> {
-    if request.messages.len() == 0 {
+pub(crate) fn validate_chat_request(request: &request::ChatCompletionCreate) -> Result<(), ReasonerError> {
+    if request.messages.is_empty() {
         return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
     }
     if let request::Message::Assistant(_) = request.messages.last().unwrap() {
@@ -32,6 +28,15 @@ pub(crate) async fn create_chat_completion(
             "error: cannot process partial assistant response content in messages yet!".to_string(),
         ));
     }
+    Ok(())
+}
+
+pub(crate) async fn create_chat_completion(
+    client: &LLMClient,
+    request: request::ChatCompletionCreate,
+    model_config: &config::ModelConfig,
+) -> Result<response_direct::ChatCompletion, ReasonerError> {
+    validate_chat_request(&request)?;
 
     let mut message_assistant = request::MessageAssistant {
         reasoning_content: None,
@@ -175,14 +180,7 @@ pub(crate) async fn stream_chat_completion(
     model_config: &config::ModelConfig,
     sender: Sender<Result<Bytes, ReasonerError>>,
 ) -> Result<(), ReasonerError> {
-    if request.messages.len() == 0 {
-        return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
-    }
-    if let request::Message::Assistant(_) = request.messages.last().unwrap() {
-        return Err(ReasonerError::ValidationError(
-            "error: cannot process partial assistant response content in messages yet!".to_string(),
-        ));
-    }
+    validate_chat_request(&request)?;
 
     let mut message_assistant = request::MessageAssistant {
         reasoning_content: None,
