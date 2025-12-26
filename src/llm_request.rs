@@ -7,6 +7,7 @@ use tokio::sync::mpsc::Sender;
 
 use crate::config;
 use crate::consts;
+use crate::errors::ReasonerError;
 use crate::llm_client::LLMClient;
 use crate::models::FinishReason;
 use crate::models::Usage;
@@ -22,14 +23,14 @@ pub(crate) async fn create_chat_completion(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
     model_config: &config::ModelConfig,
-) -> Result<response_direct::ChatCompletion, Box<dyn std::error::Error>> {
+) -> Result<response_direct::ChatCompletion, ReasonerError> {
     if request.messages.len() == 0 {
-        return Err("error: empty messages".into());
+        return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
     }
     if let request::Message::Assistant(_) = request.messages.last().unwrap() {
-        return Err(
-            "error: cannot process partial assistant response content in messages yet!".into(),
-        );
+        return Err(ReasonerError::ValidationError(
+            "error: cannot process partial assistant response content in messages yet!".to_string(),
+        ));
     }
 
     let mut message_assistant = request::MessageAssistant {
@@ -53,7 +54,11 @@ pub(crate) async fn create_chat_completion(
     let reasoning_response = response.json::<response_direct::ChatCompletion>().await?;
     let reasoning_choice = match reasoning_response.choices.first() {
         Some(choice) => choice,
-        None => return Err("error: no reasoning response".into()),
+        None => {
+            return Err(ReasonerError::ApiError(
+                "error: no reasoning response".to_string(),
+            ))
+        }
     };
     let prompt_tokens = reasoning_response.usage.prompt_tokens;
     let reasoning_tokens = reasoning_response.usage.completion_tokens;
@@ -109,7 +114,11 @@ pub(crate) async fn create_chat_completion(
         let answer_response = response.json::<response_direct::ChatCompletion>().await?;
         let answer_choice = match answer_response.choices.first() {
             Some(choice) => choice,
-            None => return Err("error: no answer response".into()),
+            None => {
+                return Err(ReasonerError::ApiError(
+                    "error: no answer response".to_string(),
+                ))
+            }
         };
 
         answer_text = match &answer_choice.message.content {
@@ -164,15 +173,15 @@ pub(crate) async fn stream_chat_completion(
     client: &LLMClient,
     request: request::ChatCompletionCreate,
     model_config: &config::ModelConfig,
-    sender: Sender<Result<Bytes, Box<dyn std::error::Error>>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+    sender: Sender<Result<Bytes, ReasonerError>>,
+) -> Result<(), ReasonerError> {
     if request.messages.len() == 0 {
-        return Err("error: empty messages".into());
+        return Err(ReasonerError::ValidationError("error: empty messages".to_string()));
     }
     if let request::Message::Assistant(_) = request.messages.last().unwrap() {
-        return Err(
-            "error: cannot process partial assistant response content in messages yet!".into(),
-        );
+        return Err(ReasonerError::ValidationError(
+            "error: cannot process partial assistant response content in messages yet!".to_string(),
+        ));
     }
 
     let mut message_assistant = request::MessageAssistant {
@@ -389,7 +398,7 @@ pub(crate) async fn stream_chat_completion(
 
 fn extract_chunks_from_event(
     response_event: Result<Option<Bytes>, Error>,
-) -> Result<Option<Vec<response_stream::ChatCompletionChunk>>, Box<dyn std::error::Error>> {
+) -> Result<Option<Vec<response_stream::ChatCompletionChunk>>, ReasonerError> {
     let events = match response_event {
         Ok(Some(chunk)) => chunk,
         Ok(None) => {
@@ -398,7 +407,7 @@ fn extract_chunks_from_event(
         }
         Err(e) => {
             log::debug!("extract_chunks_from_event: Error reading events: {e}");
-            return Err(Box::new(e));
+            return Err(ReasonerError::NetworkError(e.to_string()));
         }
     };
 
@@ -406,7 +415,7 @@ fn extract_chunks_from_event(
         Ok(text) => text.trim(),
         Err(e) => {
             log::debug!("extract_chunks_from_event: Error decoding events: {e}");
-            return Err(Box::new(e));
+            return Err(ReasonerError::ParseError(e.to_string()));
         }
     };
 
@@ -427,7 +436,7 @@ fn extract_chunks_from_event(
             Ok(json) => json,
             Err(e) => {
                 log::debug!("extract_chunks_from_event: Error parsing chunk: {e}");
-                return Err(Box::new(e));
+                return Err(ReasonerError::ParseError(e.to_string()));
             }
         };
         chunks.push(chunk);
@@ -437,29 +446,29 @@ fn extract_chunks_from_event(
 }
 
 async fn send_data(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    sender: &Sender<Result<Bytes, ReasonerError>>,
     data: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ReasonerError> {
     let event_data = format!("data: {}\n\n", data);
     if let Err(e) = sender.send(Ok(event_data.into())).await {
         log::warn!("failed to send message: {:?}", e.0);
-        return Err("failed to send message".into());
+        return Err(ReasonerError::NetworkError("failed to send message".to_string()));
     }
     Ok(())
 }
 
 async fn send_chunk(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    sender: &Sender<Result<Bytes, ReasonerError>>,
     chunk: &response_stream::ChatCompletionChunk,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ReasonerError> {
     send_data(sender, serde_json::to_string(chunk).unwrap()).await
 }
 
 async fn send_delta(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    sender: &Sender<Result<Bytes, ReasonerError>>,
     mut chunk: response_stream::ChatCompletionChunk,
     delta: response_stream::ChunkChoiceDelta,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ReasonerError> {
     chunk.choices = vec![response_stream::ChunkChoice {
         index: 0,
         delta: delta,
@@ -471,17 +480,17 @@ async fn send_delta(
 
 #[cfg(reasoning)]
 async fn send_delta_thinking_end(
-    _: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    _: &Sender<Result<Bytes, ReasonerError>>,
     _: &response_stream::ChatCompletionChunk,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ReasonerError> {
     Ok(())
 }
 
 #[cfg(not(reasoning))]
 async fn send_delta_thinking_end(
-    sender: &Sender<Result<Bytes, Box<dyn std::error::Error>>>,
+    sender: &Sender<Result<Bytes, ReasonerError>>,
     chunk: &response_stream::ChatCompletionChunk,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), ReasonerError> {
     send_delta(
         sender,
         chunk.clone(),

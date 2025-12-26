@@ -1,5 +1,6 @@
 mod config;
 mod consts;
+mod errors;
 mod llm_client;
 mod llm_request;
 mod models;
@@ -9,6 +10,7 @@ use actix_web::{middleware::Logger, mime};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::errors::ReasonerError;
 use crate::models::{model_list, request};
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,9 +54,11 @@ async fn chat_completion(
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
-        let (sender, receiver) = mpsc::channel::<Result<Bytes, Box<dyn std::error::Error>>>(100);
+        let (sender, receiver) = mpsc::channel::<Result<Bytes, ReasonerError>>(100);
         actix_web::rt::spawn(async move {
-            llm_request::stream_chat_completion(&client, request.0, &model_config, sender).await
+            if let Err(e) = llm_request::stream_chat_completion(&client, request.0, &model_config, sender).await {
+                log::error!("stream_chat_completion error: {:?}", e);
+            }
         });
 
         return actix_web::HttpResponse::Ok()
@@ -77,7 +81,7 @@ async fn main() -> std::io::Result<()> {
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
     log::info!("Initializing Adaptive Reasoner service...");
 
-    let model_config = config::load_config();
+    let model_config = config::load_config().expect("Failed to load config");
     let data = Data::from(Arc::new(model_config));
 
     let app_factory = move || {

@@ -4,6 +4,7 @@ use actix_web::mime;
 use reqwest::Response;
 use serde_json::Value;
 
+use crate::errors::ReasonerError;
 use crate::models::request;
 
 pub(crate) struct LLMClient {
@@ -31,7 +32,7 @@ impl LLMClient {
         &self,
         mut request: request::ChatCompletionCreate,
         expected_content_type: mime::Mime,
-    ) -> Result<Response, Box<dyn std::error::Error>> {
+    ) -> Result<Response, ReasonerError> {
         if let Some(extra_body) = self.extra_body.clone() {
             request.extra = extra_body;
         }
@@ -48,16 +49,18 @@ impl LLMClient {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
 
-            return Err(format!("error: status {status}, text {text}").into());
+            return Err(ReasonerError::ApiError(format!(
+                "error: status {status}, text {text}"
+            )));
         }
 
         let content_type: mime::Mime = response.headers()[reqwest::header::CONTENT_TYPE]
             .to_str()?
             .parse()?;
         if content_type.essence_str() != expected_content_type.essence_str() {
-            return Err(
-                format!("content-type: {content_type}, expected: {expected_content_type}").into(),
-            );
+            return Err(ReasonerError::ParseError(format!(
+                "content-type: {content_type}, expected: {expected_content_type}"
+            )));
         }
 
         Ok(response)
