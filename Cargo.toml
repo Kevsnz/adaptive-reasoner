@@ -19,3 +19,9 @@ log = "0.4.29"
 
 [features]
 # reasoning = []
+
+[dev-dependencies]
+tokio-test = "0.4"
+thiserror = "2.0"
+wiremock = "0.6"
+reqwest = { version = "0.12", features = ["json"] }
