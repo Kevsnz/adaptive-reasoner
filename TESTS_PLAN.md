@@ -164,7 +164,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 6: Create Test Doubles
 
-### Step 15: Implement `MockLLMClient` in `tests/mocks/mod.rs`
+### Step 15: Implement `MockLLMClient` in `tests/mocks/mod.rs` [✓ COMPLETED]
 - Implement `LLMClientTrait` for mock:
   ```rust
   pub struct MockLLMClient {
@@ -177,6 +177,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Implement `new()` method with empty response queue
 - Implement `add_response()` method to queue responses
 - Implement `get_calls()` method to inspect captured requests
+- **Technical Note**: Due to reqwest::Response being tied to actual HTTP connections, MockLLMClient makes HTTP calls to configurable base_url (wiremock server) where responses are configured. The `responses` field exists per interface design but responses are configured via wiremock in tests.
 
 ### Step 16: Implement `InMemoryConfigLoader` in `tests/mocks/mod.rs`
 - Implement `ConfigLoaderTrait` returning test configs:
