@@ -1,32 +1,23 @@
-use crate::models::request;
-use crate::models::response_direct::{ChatCompletion, Choice, MessageAssistant};
-use crate::models::response_stream::{ChatCompletionChunk, ChunkChoice, ChunkChoiceDelta, Usage};
-use crate::models::FinishReason;
+use adaptive_reasoner::models::request;
+use adaptive_reasoner::models::response_direct::{ChatCompletion, Choice};
+use adaptive_reasoner::models::response_stream::{ChatCompletionChunk, ChunkChoice, ChunkChoiceDelta};
+use adaptive_reasoner::models::{FinishReason, Usage};
 
 pub fn sample_chat_request() -> request::ChatCompletionCreate {
     request::ChatCompletionCreate {
         model: "test-model".to_string(),
         messages: vec![
-            request::Message::User(request::MessageUser {
-                content: request::Content::Text("Hello, how are you?".to_string()),
+            request::Message::User(request::MessageSystemUser {
+                content: request::MessageContent::String("Hello, how are you?".to_string()),
             }),
         ],
         max_tokens: Some(100),
-        temperature: Some(0.7),
-        top_p: None,
-        n: None,
         stop: None,
-        presence_penalty: None,
-        frequency_penalty: None,
-        logit_bias: None,
-        user: None,
-        response_format: None,
-        seed: None,
-        tools: None,
-        tool_choice: None,
-        parallel_tool_calls: None,
         stream: None,
         stream_options: None,
+        tools: None,
+        tool_choice: None,
+        extra: Default::default(),
     }
 }
 
@@ -35,21 +26,12 @@ pub fn empty_messages_request() -> request::ChatCompletionCreate {
         model: "test-model".to_string(),
         messages: vec![],
         max_tokens: Some(100),
-        temperature: Some(0.7),
-        top_p: None,
-        n: None,
         stop: None,
-        presence_penalty: None,
-        frequency_penalty: None,
-        logit_bias: None,
-        user: None,
-        response_format: None,
-        seed: None,
-        tools: None,
-        tool_choice: None,
-        parallel_tool_calls: None,
         stream: None,
         stream_options: None,
+        tools: None,
+        tool_choice: None,
+        extra: Default::default(),
     }
 }
 
@@ -57,31 +39,22 @@ pub fn assistant_last_request() -> request::ChatCompletionCreate {
     request::ChatCompletionCreate {
         model: "test-model".to_string(),
         messages: vec![
-            request::Message::User(request::MessageUser {
-                content: request::Content::Text("Hello".to_string()),
+            request::Message::User(request::MessageSystemUser {
+                content: request::MessageContent::String("Hello".to_string()),
             }),
-            request::Message::Assistant(MessageAssistant {
+            request::Message::Assistant(request::MessageAssistant {
                 reasoning_content: None,
                 content: Some("I'm doing well".to_string()),
                 tool_calls: None,
             }),
         ],
         max_tokens: Some(100),
-        temperature: Some(0.7),
-        top_p: None,
-        n: None,
         stop: None,
-        presence_penalty: None,
-        frequency_penalty: None,
-        logit_bias: None,
-        user: None,
-        response_format: None,
-        seed: None,
-        tools: None,
-        tool_choice: None,
-        parallel_tool_calls: None,
         stream: None,
         stream_options: None,
+        tools: None,
+        tool_choice: None,
+        extra: Default::default(),
     }
 }
 
@@ -93,7 +66,7 @@ pub fn sample_reasoning_response() -> ChatCompletion {
         model: "test-model".to_string(),
         choices: vec![Choice {
             index: 0,
-            message: MessageAssistant {
+            message: request::MessageAssistant {
                 reasoning_content: None,
                 content: Some("Let me think about this carefully...".to_string()),
                 tool_calls: None,
@@ -117,7 +90,7 @@ pub fn sample_answer_response() -> ChatCompletion {
         model: "test-model".to_string(),
         choices: vec![Choice {
             index: 0,
-            message: MessageAssistant {
+            message: request::MessageAssistant {
                 reasoning_content: None,
                 content: Some("I'm doing great, thank you!".to_string()),
                 tool_calls: None,
@@ -160,7 +133,6 @@ pub fn sample_reasoning_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some("Let".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,
@@ -178,7 +150,6 @@ pub fn sample_reasoning_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some(" me".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,
@@ -196,7 +167,6 @@ pub fn sample_reasoning_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some(" think".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,
@@ -223,7 +193,6 @@ pub fn sample_answer_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some("I'm".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,
@@ -241,7 +210,6 @@ pub fn sample_answer_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some(" doing".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,
@@ -259,7 +227,6 @@ pub fn sample_answer_chunks() -> Vec<ChatCompletionChunk> {
                 delta: ChunkChoiceDelta {
                     content: Some(" great!".to_string()),
                     role: None,
-                    reasoning_content: None,
                     tool_calls: None,
                 },
                 logprobs: None,

@@ -271,7 +271,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 8: Add Integration Tests
 
-### Step 21: Create integration test module `tests/integration.rs`
+### Step 21: Create integration test module `tests/integration.rs` [✓ COMPLETED]
 - Set up test server with mock dependencies:
   - Create `MockLLMClient` with predefined responses
   - Create `ReasoningService` with mock client
@@ -285,6 +285,15 @@ Add the following dependencies under `[dev-dependencies]`:
   - API failures at answer phase
   - Malformed responses
 - Use `tokio::test` macro for async tests
+- **Technical Note**: Implemented 8 integration tests covering:
+  - Complete reasoning and answer flow
+  - Streaming with multiple chunks
+  - API failures at reasoning and answer phases
+  - Malformed responses
+  - Reasoning budget exceeded
+  - Tool calls propagation
+  - Empty reasoning content
+- Fixed wiremock header issue by using `set_body_bytes()` instead of `set_body_string()` to prevent default `text/plain` content-type from overriding the intended `text/event-stream` header
 
 ### Step 22: Create HTTP endpoint test module `tests/http.rs`
 - Use actix-web's `actix_web::test` utilities:

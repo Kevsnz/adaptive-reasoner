@@ -7,28 +7,28 @@ use serde::{self, Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Role {
+pub enum Role {
     System,
     User,
     Assistant,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FinishReason {
+pub enum FinishReason {
     Stop,
     Length,
     ToolCalls,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Usage {
-    pub(crate) prompt_tokens: i32,
-    pub(crate) completion_tokens: i32,
-    pub(crate) total_tokens: i32,
+pub struct Usage {
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct LogProbs {
-    pub(crate) tokens: Vec<f32>,
+pub struct LogProbs {
+    pub tokens: Vec<f32>,
 }

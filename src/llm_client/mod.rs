@@ -17,7 +17,7 @@ pub trait LLMClientTrait: Send + Sync {
     ) -> Result<Response, ReasonerError>;
 }
 
-pub(crate) struct LLMClient {
+pub struct LLMClient {
     client: reqwest::Client,
     base_url: String,
     api_key: String,
@@ -25,7 +25,7 @@ pub(crate) struct LLMClient {
 }
 
 impl LLMClient {
-    pub(crate) fn new(
+    pub fn new(
         client: reqwest::Client,
         base_url: &str,
         api_key: &str,

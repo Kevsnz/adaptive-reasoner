@@ -3,16 +3,16 @@ use serde::{self, Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub(crate) struct ChunkChoiceDelta {
+pub struct ChunkChoiceDelta {
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) role: Option<Role>,
+    pub role: Option<Role>,
     #[cfg(reasoning)]
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) reasoning_content: Option<String>,
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) content: Option<String>,
+    pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) tool_calls: Option<Vec<Value>>,
+    pub tool_calls: Option<Vec<Value>>,
 }
 
 impl ChunkChoiceDelta {
@@ -58,22 +58,22 @@ impl ChunkChoiceDelta {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ChunkChoice {
-    pub(crate) index: i32,
-    pub(crate) delta: ChunkChoiceDelta,
+pub struct ChunkChoice {
+    pub index: i32,
+    pub delta: ChunkChoiceDelta,
     #[serde(default)]
-    pub(crate) logprobs: Option<LogProbs>,
+    pub logprobs: Option<LogProbs>,
     #[serde(default)]
-    pub(crate) finish_reason: Option<FinishReason>,
+    pub finish_reason: Option<FinishReason>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ChatCompletionChunk {
-    pub(crate) id: String,
-    pub(crate) object: String,
-    pub(crate) created: i64,
-    pub(crate) model: String,
-    pub(crate) choices: Vec<ChunkChoice>,
+pub struct ChatCompletionChunk {
+    pub id: String,
+    pub object: String,
+    pub created: i64,
+    pub model: String,
+    pub choices: Vec<ChunkChoice>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub(crate) usage: Option<Usage>,
+    pub usage: Option<Usage>,
 }

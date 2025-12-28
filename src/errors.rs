@@ -1,7 +1,7 @@
 use std::fmt;
 
 #[derive(Debug, Clone)]
-pub(crate) enum ReasonerError {
+pub enum ReasonerError {
     ValidationError(String),
     ApiError(String),
     ParseError(String),

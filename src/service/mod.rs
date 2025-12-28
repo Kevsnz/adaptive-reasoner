@@ -31,7 +31,7 @@ impl ReasoningService {
         Self { http_client }
     }
 
-    fn create_llm_client(&self, model_config: &config::ModelConfig) -> Box<dyn LLMClientTrait> {
+    pub(crate) fn create_llm_client(&self, model_config: &config::ModelConfig) -> Box<dyn LLMClientTrait> {
         Box::new(LLMClient::new(
             self.http_client.clone(),
             &model_config.api_url,

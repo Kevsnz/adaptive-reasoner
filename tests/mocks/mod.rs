@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use reqwest::Response;
 use serde_json::Value;
 
-use crate::config::{Config, ConfigLoader, ModelConfig};
-use crate::errors::ReasonerError;
-use crate::llm_client::LLMClientTrait;
-use crate::models::request;
+use adaptive_reasoner::config::{Config, ConfigLoader, ModelConfig};
+use adaptive_reasoner::errors::ReasonerError;
+use adaptive_reasoner::llm_client::LLMClientTrait;
+use adaptive_reasoner::models::request;
 
 pub struct MockLLMClient {
     base_url: String,
@@ -46,7 +46,7 @@ impl LLMClientTrait for MockLLMClient {
         request: request::ChatCompletionCreate,
         _expected_content_type: mime::Mime,
     ) -> Result<Response, ReasonerError> {
-        self.calls.lock().unwrap().push(request);
+        self.calls.lock().unwrap().push(request.clone());
 
         let client = reqwest::Client::new();
         let url = format!("{}{}", self.base_url, "/chat/completions");

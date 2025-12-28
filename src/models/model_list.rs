@@ -2,25 +2,25 @@ use serde::{self, Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum ObjectType {
+pub enum ObjectType {
     Model,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum Owner {
+pub enum Owner {
     AdaptiveReasoner,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelList {
-    pub(crate) data: Vec<Model>,
+pub struct ModelList {
+    pub data: Vec<Model>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Model {
-    pub(crate) id: String,
-    pub(crate) object: ObjectType,
-    pub(crate) created: i64,
-    pub(crate) owned_by: Owner,
+pub struct Model {
+    pub id: String,
+    pub object: ObjectType,
+    pub created: i64,
+    pub owned_by: Owner,
 }

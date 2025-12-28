@@ -6,27 +6,27 @@ use serde_json::Value;
 use crate::errors::ReasonerError;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct ModelConfig {
-    pub(crate) model_name: String,
-    pub(crate) api_url: String,
-    pub(crate) api_key: String,
-    pub(crate) reasoning_budget: i32,
-    pub(crate) extra: Option<HashMap<String, Value>>,
+pub struct ModelConfig {
+    pub model_name: String,
+    pub api_url: String,
+    pub api_key: String,
+    pub reasoning_budget: i32,
+    pub extra: Option<HashMap<String, Value>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct Config {
-    pub(crate) models: HashMap<String, ModelConfig>,
+pub struct Config {
+    pub models: HashMap<String, ModelConfig>,
 }
 
-pub(crate) trait ConfigLoader: Send + Sync {
+pub trait ConfigLoader: Send + Sync {
     fn load_config(&self) -> Result<Config, ReasonerError>;
 }
 
-pub(crate) struct FileConfigLoader;
+pub struct FileConfigLoader;
 
 impl FileConfigLoader {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self
     }
 }
@@ -45,7 +45,7 @@ impl ConfigLoader for FileConfigLoader {
     }
 }
 
-pub(crate) fn load_config() -> Result<Config, ReasonerError> {
+pub fn load_config() -> Result<Config, ReasonerError> {
     let loader = FileConfigLoader::new();
     loader.load_config()
 }
