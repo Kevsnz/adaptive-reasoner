@@ -179,7 +179,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Implement `get_calls()` method to inspect captured requests
 - **Technical Note**: Due to reqwest::Response being tied to actual HTTP connections, MockLLMClient makes HTTP calls to configurable base_url (wiremock server) where responses are configured. The `responses` field exists per interface design but responses are configured via wiremock in tests.
 
-### Step 16: Implement `InMemoryConfigLoader` in `tests/mocks/mod.rs`
+### Step 16: Implement `InMemoryConfigLoader` in `tests/mocks/mod.rs` [✓ COMPLETED]
 - Implement `ConfigLoaderTrait` returning test configs:
   ```rust
   pub struct InMemoryConfigLoader {
@@ -190,8 +190,9 @@ Add the following dependencies under `[dev-dependencies]`:
 - Implement `new()` method accepting `Config`
 - Avoid all filesystem operations
 - Useful for testing config loading logic without file I/O
+- Added convenience constructor `with_model_config()` for creating configs with single model (tests/mocks/mod.rs:80-96)
 
-### Step 17: Create test fixtures in `tests/fixtures/mod.rs`
+### Step 17: Create test fixtures in `tests/fixtures/mod.rs` [✓ COMPLETED]
 - Define sample requests:
   - `sample_chat_request()` - Basic valid request
   - `empty_messages_request()` - Invalid request for validation testing
@@ -208,6 +209,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Empty reasoning content
   - Budget exceeded scenarios
   - Partial streaming chunks
+- Implemented all fixture functions (tests/fixtures/mod.rs:1-245)
 
 ---
 
