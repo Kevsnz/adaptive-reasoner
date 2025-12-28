@@ -4,3 +4,5 @@
 test.http
 
 .env
+
+config.json

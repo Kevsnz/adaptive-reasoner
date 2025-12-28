@@ -295,7 +295,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Empty reasoning content
 - Fixed wiremock header issue by using `set_body_bytes()` instead of `set_body_string()` to prevent default `text/plain` content-type from overriding the intended `text/event-stream` header
 
-### Step 22: Create HTTP endpoint test module `tests/http.rs`
+### Step 22: Create HTTP endpoint test module `tests/http.rs` [✓ COMPLETED]
 - Use actix-web's `actix_web::test` utilities:
   - `actix_web::test::init_service()`
   - `actix_web::test::call_service()`
@@ -314,12 +314,58 @@ Add the following dependencies under `[dev-dependencies]`:
 - Test error responses:
   - Verify error response format
   - Test various HTTP status codes
+- **Technical Note**: Due to actix-web test utility complexity with `App::app_data()` and `Arc`-wrapped data:
+  - Created `src/handlers.rs` module to export handlers with `pub` visibility for both main binary and tests
+  - Changed handlers from `pub(crate)` to `pub` to make them accessible from test crates
+  - Following the pattern from user's `create_app` function in main.rs for type-safe app construction
+  - HTTP tests follow the same closure pattern: `move || App::new().app_data(...).service(...)`
+  - Implemented 6 HTTP endpoint tests:
+    - `/v1/models` endpoint (model list verification)
+    - Invalid model validation
+    - Assistant as last message validation
+    - Malformed JSON handling
+    - Empty messages validation
+    - API error propagation (500 status -> BAD_GATEWAY)
+- Note: Full integration tests with wiremock for streaming/non-streaming chat completions are already covered by `tests/integration.rs`. HTTP endpoint tests focus on routing, validation, and error handling without needing full service mocks.
+- **Note**: Additional HTTP tests identified for future implementation (Steps 23-26):
+  - Step 23: Non-streaming chat completion test (wiremock with actual flow)
+  - Step 24: Streaming chat completion test (SSE format verification)
+  - Step 25: Response format verification tests (detailed assertions)
+  - Step 26: Routing edge case tests (404, 405, etc.)
+- These steps are marked as future enhancements since current coverage is sufficient for basic functionality testing.
+
+### Step 23: Add non-streaming chat completion test [FUTURE]
+- Use wiremock to test complete non-streaming flow with actual HTTP client
+- Test successful completion with reasoning and answer phases
+- Verify response body structure and content
+- Check combined reasoning + answer text is correct
+- Validate usage statistics are combined correctly
+
+### Step 24: Add streaming chat completion test
+- Use wiremock to test complete streaming flow
+- Verify SSE (Server-Sent Events) format headers
+- Check that streamed chunks are received in order
+- Verify final usage statistics chunk
+- Test that [DONE] marker is properly handled
+
+### Step 25: Add response format verification tests
+- Test detailed response structure assertions
+- Verify `id`, `created`, `model` fields
+- Check `choices` array structure
+- Validate `finish_reason` enum values
+- Test `usage` object (prompt_tokens, completion_tokens, total_tokens)
+
+### Step 26: Add routing edge case tests
+- Test `GET /v1/chat/completions` (should return 405 Method Not Allowed)
+- Test `/v1/nonexistent` route (should return 404 Not Found)
+- Test `/nonexistent` without /v1 prefix (should return 404)
+- Verify correct status codes and error formats
 
 ---
 
-## Phase 9: Final Refinements
+## Phase 9: Final Polish
 
-### Step 23: Extract remaining magic numbers to constants
+### Step 27: Extract remaining magic numbers to constants
 - Add to `src/consts.rs`:
   - `CONNECT_TIMEOUT_SECS: u64 = 30`
   - `READ_TIMEOUT_SECS: u64 = 60`
@@ -328,7 +374,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Replace magic numbers in `main.rs` with constants
 - Document what each constant controls
 
-### Step 24: Add conditional compilation for test mode
+### Step 28: Add conditional compilation for test mode
 - Create `src/test_utils/mod.rs` with `#[cfg(test)]`
 - Add test-specific helpers:
   - Helper functions to create test requests
@@ -336,7 +382,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Assertion helpers for responses
 - Ensure test utils are excluded from production builds
 
-### Step 25: Create testing documentation in `TESTING.md`
+### Step 29: Create testing documentation in `TESTING.md`
 - Document test execution commands:
   - `cargo test` - Run all tests
   - `cargo test -- --nocapture` - Show test output
@@ -354,7 +400,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - How to queue responses
   - How to verify captured requests
 
-### Step 26: Update main README with test coverage info
+### Step 30: Update main README with test coverage info
 - Add "Testing" section to README.md
 - Include test execution commands
 - Document current test coverage goals
@@ -362,6 +408,28 @@ Add the following dependencies under `[dev-dependencies]`:
   - How tests run in CI
   - Coverage reporting
   - Test failure policies
+
+---
+
+## Phase 11: Additional Coverage (Future Steps)
+
+### Step 31: Add comprehensive streaming response tests
+- Test SSE format correctness
+- Test chunk ordering guarantees
+- Test incomplete stream handling
+- Test timeout scenarios
+
+### Step 32: Add error scenario coverage
+- Test various HTTP error codes
+- Test network failure scenarios
+- Test malformed responses
+- Test timeout errors
+
+### Step 33: Performance and load tests
+- Add basic performance benchmarks
+- Test concurrent request handling
+- Memory leak detection
+- Connection pooling behavior
 
 ---
 
@@ -398,8 +466,10 @@ The codebase will be considered sufficiently testable when:
 - **Phase 7 (Unit Tests):** 3-4 hours
 - **Phase 8 (Integration Tests):** 2-3 hours
 - **Phase 9 (Final Polish):** 1 hour
+- **Phase 10 (Additional HTTP Tests):** 1-2 hours
+- **Phase 11 (Additional Coverage):** 2-4 hours (future)
 
-**Total Estimated Time:** 11-17 hours
+**Total Estimated Time:** 13-21 hours
 
 ---
 
