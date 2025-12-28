@@ -215,7 +215,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 7: Add Unit Tests
 
-### Step 18: Write unit tests for extracted pure functions
+### Step 18: Write unit tests for extracted pure functions [✓ COMPLETED]
 - Test `validate_chat_request()` in `src/llm_request.rs`:
   - Test with valid request - should return `Ok(())`
   - Test with empty messages - should return `ValidationError`
@@ -228,6 +228,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Test `build_reasoning_request()` creates correct structure
   - Test `build_answer_request()` wraps reasoning correctly
   - Verify stop sequences and token limits
+- Implemented 8 unit tests covering all pure functions (src/llm_request.rs:100-267)
 
 ### Step 19: Write unit tests for error types
 - Test error creation and conversion in `src/errors.rs`:
