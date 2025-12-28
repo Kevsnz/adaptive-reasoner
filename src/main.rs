@@ -7,13 +7,13 @@ mod models;
 mod service;
 
 use actix_web::web::{Bytes, Data, ThinData};
-use actix_web::{middleware::Logger, mime};
+use actix_web::{middleware::Logger, mime, App};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::errors::ReasonerError;
-use crate::llm_client::{LLMClient, LLMClientTrait};
 use crate::models::{model_list, request};
+use crate::service::ReasoningService;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,12 +47,6 @@ async fn chat_completion(
         }
     };
 
-    let client: Box<dyn LLMClientTrait> = Box::new(LLMClient::new(
-        client,
-        &model_config.api_url,
-        &model_config.api_key,
-        &model_config.extra,
-    ));
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
@@ -84,7 +78,15 @@ async fn main() -> std::io::Result<()> {
     log::info!("Initializing Adaptive Reasoner service...");
 
     let model_config = config::load_config().expect("Failed to load config");
-    let data = Data::from(Arc::new(model_config));
+
+    let http_client = reqwest::Client::builder()
+        .connect_timeout(Duration::new(30, 0))
+        .read_timeout(Duration::new(60, 0))
+        .build()
+        .unwrap();
+
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+    let config = Arc::new(model_config);
 
     let app_factory = move || {
         let client = reqwest::Client::builder()
@@ -93,18 +95,16 @@ async fn main() -> std::io::Result<()> {
             .build()
             .unwrap();
 
-        let router = actix_web::web::scope("/v1")
-            .route("/models", actix_web::web::get().to(models))
-            .route(
-                "/chat/completions",
-                actix_web::web::post().to(chat_completion),
-            );
-
-        actix_web::App::new()
+        App::new()
             .wrap(Logger::default())
             .app_data(ThinData(client))
-            .app_data(data.clone())
-            .service(router)
+            .app_data(Data::from(reasoning_service.clone()))
+            .app_data(Data::from(config.clone()))
+            .service(
+                actix_web::web::scope("/v1")
+                    .route("/models", actix_web::web::get().to(models))
+                    .route("/chat/completions", actix_web::web::post().to(chat_completion))
+            )
     };
 
     let server = actix_web::HttpServer::new(app_factory);

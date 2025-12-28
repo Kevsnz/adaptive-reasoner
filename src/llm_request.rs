@@ -3,7 +3,6 @@ use tokio::sync::mpsc::Sender;
 
 use crate::config;
 use crate::errors::ReasonerError;
-use crate::llm_client::{LLMClientTrait};
 use crate::models::request;
 use crate::models::response_direct::ChatCompletion;
 
@@ -78,20 +77,20 @@ pub(crate) fn validate_chat_request(
 }
 
 pub(crate) async fn create_chat_completion(
-    client: Box<dyn LLMClientTrait>,
+    http_client: reqwest::Client,
     request: request::ChatCompletionCreate,
     model_config: &config::ModelConfig,
 ) -> Result<ChatCompletion, ReasonerError> {
-    let service = ReasoningService::new(client);
+    let service = ReasoningService::new(http_client);
     service.create_completion(request, model_config).await
 }
 
 pub(crate) async fn stream_chat_completion(
-    client: Box<dyn LLMClientTrait>,
+    http_client: reqwest::Client,
     request: request::ChatCompletionCreate,
     model_config: &config::ModelConfig,
     sender: Sender<Result<Bytes, ReasonerError>>,
 ) -> Result<(), ReasonerError> {
-    let service = ReasoningService::new(client);
+    let service = ReasoningService::new(http_client);
     service.stream_completion(request, model_config, sender).await
 }

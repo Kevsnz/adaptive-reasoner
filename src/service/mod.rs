@@ -7,7 +7,7 @@ use tokio::sync::mpsc::Sender;
 use crate::config;
 use crate::consts;
 use crate::errors::ReasonerError;
-use crate::llm_client::LLMClientTrait;
+use crate::llm_client::{LLMClient, LLMClientTrait};
 use crate::llm_request::{
     build_answer_request, build_reasoning_request, calculate_remaining_tokens,
     validate_chat_request,
@@ -21,13 +21,23 @@ use crate::models::response_stream;
 use crate::models::response_stream::ChatCompletionChunk;
 use crate::models::response_stream::ChunkChoiceDelta;
 
+#[derive(Clone)]
 pub struct ReasoningService {
-    client: Box<dyn LLMClientTrait>,
+    http_client: reqwest::Client,
 }
 
 impl ReasoningService {
-    pub fn new(client: Box<dyn LLMClientTrait>) -> Self {
-        Self { client }
+    pub fn new(http_client: reqwest::Client) -> Self {
+        Self { http_client }
+    }
+
+    fn create_llm_client(&self, model_config: &config::ModelConfig) -> Box<dyn LLMClientTrait> {
+        Box::new(LLMClient::new(
+            self.http_client.clone(),
+            &model_config.api_url,
+            &model_config.api_key,
+            &model_config.extra,
+        ))
     }
 
     pub async fn create_completion(
@@ -37,10 +47,11 @@ impl ReasoningService {
     ) -> Result<ChatCompletion, ReasonerError> {
         validate_chat_request(&request)?;
 
+        let client = self.create_llm_client(model_config);
+
         let reasoning_request = build_reasoning_request(request.clone(), model_config);
 
-        let response = self
-            .client
+        let response = client
             .request_chat_completion(reasoning_request, mime::APPLICATION_JSON)
             .await?;
 
@@ -93,8 +104,7 @@ impl ReasoningService {
                 remaining_tokens,
             );
 
-            let response = self
-                .client
+            let response = client
                 .request_chat_completion(answer_request, mime::APPLICATION_JSON)
                 .await?;
 
@@ -168,6 +178,8 @@ impl ReasoningService {
     ) -> Result<(), ReasonerError> {
         validate_chat_request(&request)?;
 
+        let client = self.create_llm_client(model_config);
+
         let mut reasoning_request = build_reasoning_request(request.clone(), model_config);
         reasoning_request.stream_options = Some(request::StreamOptions {
             include_usage: Some(true),
@@ -189,8 +201,7 @@ impl ReasoningService {
         };
 
         // Reasoning stream
-        let mut response = self
-            .client
+        let mut response = client
             .request_chat_completion(reasoning_request, mime::TEXT_EVENT_STREAM)
             .await?;
 
@@ -290,8 +301,7 @@ impl ReasoningService {
                 include_usage: Some(true),
             });
 
-            let mut response = self
-                .client
+            let mut response = client
                 .request_chat_completion(answer_request, mime::TEXT_EVENT_STREAM)
                 .await?;
 

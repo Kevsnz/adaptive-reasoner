@@ -106,6 +106,6 @@ The service implements a two-phase completion:
 1. Reasoning phase with limited token budget
 2. Answer phase with remaining tokens
 
-Reasoning content is either inline in content with `<think>` tags or in a separate `reasoning_content` field based on the `reasoning` feature flag.
+Reasoning content is either inline in content with `\<think\>` tags or in a separate `reasoning_content` field based on the `reasoning` feature flag.
 
 Detailed map of the project could be found in [PROJECTMAP.md](PROJECTMAP.md).

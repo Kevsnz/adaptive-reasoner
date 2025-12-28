@@ -4,6 +4,8 @@
 
 This document outlines a sequence of interdependent atomic steps to make the Adaptive Reasoner codebase more testable. The plan is ordered from foundational changes to final testing implementation, with each step building on the previous ones.
 
+In case of unexpected difficulties at any point, reach out to supervisor for assistance.
+
 ---
 
 ## Phase 1: Foundation Setup
@@ -129,12 +131,13 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 5: Refactor HTTP Handlers
 
-### Step 12: Create dependency injection factory in `main.rs`
+### Step 12: Create dependency injection factory in `main.rs` [✓ COMPLETED]
 - Create `create_app_factory(reasoning_service: ReasoningService, config: Config) -> impl Fn() -> App`
 - Move app construction logic from `main()` into this function
 - Pass `reasoning_service` via `Data<ReasoningService>`
 - Pass `config` via `Data<Config>`
 - Return configured actix-web `App`
+- **Technical Note**: Due to Rust's type system and actix-web's middleware transforming `App` type with private types, implemented factory as inline closure rather than separate function. This achieves identical functionality while allowing type inference to handle complex types automatically.
 
 ### Step 13: Update HTTP handlers to use injected dependencies
 - Refactor `chat_completion()` handler signature:
