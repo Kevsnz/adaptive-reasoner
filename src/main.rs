@@ -6,8 +6,9 @@ mod llm_request;
 mod models;
 mod service;
 
-use actix_web::web::{Bytes, Data, ThinData};
-use actix_web::{middleware::Logger, mime, App};
+use actix_web::http::StatusCode;
+use actix_web::web::{Bytes, Data};
+use actix_web::{App, middleware::Logger, mime};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -35,7 +36,7 @@ async fn models(config: Data<config::Config>) -> impl actix_web::Responder {
 }
 
 async fn chat_completion(
-    ThinData(client): ThinData<reqwest::Client>,
+    service: Data<ReasoningService>,
     config: Data<config::Config>,
     request: actix_web::web::Json<request::ChatCompletionCreate>,
 ) -> impl actix_web::Responder {
@@ -52,7 +53,10 @@ async fn chat_completion(
     if request.stream.unwrap_or(false) {
         let (sender, receiver) = mpsc::channel::<Result<Bytes, ReasonerError>>(100);
         actix_web::rt::spawn(async move {
-            if let Err(e) = llm_request::stream_chat_completion(client, request.0, &model_config, sender).await {
+            if let Err(e) = service
+                .stream_completion(request.0, &model_config, sender)
+                .await
+            {
                 log::error!("stream_chat_completion error: {:?}", e);
             }
         });
@@ -62,11 +66,18 @@ async fn chat_completion(
             .streaming(ReceiverStream::new(receiver));
     }
 
-    match llm_request::create_chat_completion(client, request.0, &model_config).await {
+    match service.create_completion(request.0, &model_config).await {
         Ok(chat_completion) => actix_web::HttpResponse::Ok().json(chat_completion),
         Err(e) => {
             log::error!("create_chat_completion error: {:?}", e);
-            actix_web::HttpResponse::BadGateway().finish()
+            let status = match e {
+                ReasonerError::ValidationError(_) => StatusCode::BAD_REQUEST,
+                ReasonerError::ApiError(_) => StatusCode::BAD_GATEWAY,
+                ReasonerError::ParseError(_) => StatusCode::BAD_GATEWAY,
+                ReasonerError::ConfigError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                ReasonerError::NetworkError(_) => StatusCode::BAD_GATEWAY,
+            };
+            actix_web::HttpResponse::build(status).finish()
         }
     }
 }
@@ -89,21 +100,17 @@ async fn main() -> std::io::Result<()> {
     let config = Arc::new(model_config);
 
     let app_factory = move || {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::new(30, 0))
-            .read_timeout(Duration::new(60, 0))
-            .build()
-            .unwrap();
-
         App::new()
             .wrap(Logger::default())
-            .app_data(ThinData(client))
             .app_data(Data::from(reasoning_service.clone()))
             .app_data(Data::from(config.clone()))
             .service(
                 actix_web::web::scope("/v1")
                     .route("/models", actix_web::web::get().to(models))
-                    .route("/chat/completions", actix_web::web::post().to(chat_completion))
+                    .route(
+                        "/chat/completions",
+                        actix_web::web::post().to(chat_completion),
+                    ),
             )
     };
 

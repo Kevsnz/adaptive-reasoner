@@ -4,6 +4,8 @@
 
 This document outlines a sequence of interdependent atomic steps to make the Adaptive Reasoner codebase more testable. The plan is ordered from foundational changes to final testing implementation, with each step building on the previous ones.
 
+As the steps are completed, they are marked as completed with a checkmark. Step descriptions are not changed. If during the process the implementation turned out to be different, the step is marked as "COMPLETED" but the desciption is amended with the details of the difference.
+
 In case of unexpected difficulties at any point, reach out to supervisor for assistance.
 
 ---
@@ -139,7 +141,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Return configured actix-web `App`
 - **Technical Note**: Due to Rust's type system and actix-web's middleware transforming `App` type with private types, implemented factory as inline closure rather than separate function. This achieves identical functionality while allowing type inference to handle complex types automatically.
 
-### Step 13: Update HTTP handlers to use injected dependencies
+### Step 13: Update HTTP handlers to use injected dependencies [✓ COMPLETED]
 - Refactor `chat_completion()` handler signature:
   ```rust
   async fn chat_completion(
@@ -153,7 +155,7 @@ Add the following dependencies under `[dev-dependencies]`:
 - Call `service.create_completion()` or `service.stream_completion()`
 - Convert `ReasonerError` to appropriate HTTP responses (400, 502, etc.)
 
-### Step 14: Update `models()` handler signature
+### Step 14: Update `models()` handler signature [✓ COMPLETED]
 - Ensure it works with injected config dependency
 - Keep implementation as-is (already simple)
 - Verify it doesn't create any side effects
