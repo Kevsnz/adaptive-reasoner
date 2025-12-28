@@ -240,7 +240,7 @@ Add the following dependencies under `[dev-dependencies]`:
   - Test error descriptions
 - Implemented 10 unit tests covering all error variants and conversions (src/errors.rs:79-168)
 
-### Step 20: Write unit tests for `ReasoningService` with mock LLM client
+### Step 20: Write unit tests for `ReasoningService` with mock LLM client [✓ COMPLETED]
 - Test happy path:
   - Successful reasoning and answer phases
   - Verify correct response structure
@@ -258,6 +258,14 @@ Add the following dependencies under `[dev-dependencies]`:
 - Test tool calls propagation:
   - Mock response with tool_calls
   - Verify tool_calls are in final response
+- Implemented 6 unit tests in src/service/mod.rs (502-652):
+  - test_reasoning_service_new() - Service construction
+  - test_reasoning_service_clone() - Clone behavior
+  - test_create_completion_validation_error_empty_messages() - Empty messages validation
+  - test_create_completion_validation_error_assistant_last() - Assistant message validation
+  - test_create_llm_client() - LLM client creation
+  - test_stream_completion_sends_dones() - Channel behavior on validation errors
+- **Note**: Full integration tests with wiremock server (happy path, budget exceeded, API errors, tool calls) will be implemented in Step 21 (integration tests). Unit tests here focus on service construction, cloning, validation, and basic behavior without external HTTP dependencies.
 
 ---
 

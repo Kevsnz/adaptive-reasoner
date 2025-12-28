@@ -482,3 +482,136 @@ async fn send_delta_thinking_end(
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_model_config() -> config::ModelConfig {
+        config::ModelConfig {
+            model_name: "test-model".to_string(),
+            api_url: "http://mock-server".to_string(),
+            api_key: "test-key".to_string(),
+            reasoning_budget: 100,
+            extra: None,
+        }
+    }
+
+    fn create_request() -> request::ChatCompletionCreate {
+        request::ChatCompletionCreate {
+            model: "test-model".to_string(),
+            messages: vec![
+                request::Message::User(request::MessageSystemUser {
+                    content: request::MessageContent::String("Hello".to_string()),
+                }),
+            ],
+            max_tokens: Some(1000),
+            stop: None,
+            stream: None,
+            stream_options: None,
+            tools: None,
+            tool_choice: None,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn test_reasoning_service_new() {
+        let http_client = reqwest::Client::new();
+        let _service = ReasoningService::new(http_client);
+    }
+
+    #[test]
+    fn test_reasoning_service_clone() {
+        let http_client = reqwest::Client::new();
+        let service1 = ReasoningService::new(http_client.clone());
+        let _service2 = service1.clone();
+    }
+
+    #[tokio::test]
+    async fn test_create_completion_validation_error_empty_messages() {
+        let http_client = reqwest::Client::new();
+        let service = ReasoningService::new(http_client);
+
+        let model_config = create_model_config();
+        let mut request = create_request();
+        request.messages = vec![];
+
+        let result = service.create_completion(request, &model_config).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ReasonerError::ValidationError(msg) => {
+                assert!(msg.contains("empty messages"));
+            }
+            _ => panic!("Expected ValidationError"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_completion_validation_error_assistant_last() {
+        let http_client = reqwest::Client::new();
+        let service = ReasoningService::new(http_client);
+
+        let model_config = create_model_config();
+        let request = request::ChatCompletionCreate {
+            model: "test-model".to_string(),
+            messages: vec![
+                request::Message::User(request::MessageSystemUser {
+                    content: request::MessageContent::String("Hello".to_string()),
+                }),
+                request::Message::Assistant(request::MessageAssistant {
+                    reasoning_content: None,
+                    content: Some("Hi".to_string()),
+                    tool_calls: None,
+                }),
+            ],
+            max_tokens: Some(1000),
+            stop: None,
+            stream: None,
+            stream_options: None,
+            tools: None,
+            tool_choice: None,
+            extra: Default::default(),
+        };
+
+        let result = service.create_completion(request, &model_config).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ReasonerError::ValidationError(msg) => {
+                assert!(msg.contains("cannot process partial assistant"));
+            }
+            _ => panic!("Expected ValidationError"),
+        }
+    }
+
+    #[test]
+    fn test_create_llm_client() {
+        let http_client = reqwest::Client::new();
+        let service = ReasoningService::new(http_client);
+
+        let model_config = create_model_config();
+        let _client = service.create_llm_client(&model_config);
+    }
+
+    #[tokio::test]
+    async fn test_stream_completion_sends_dones() {
+        let http_client = reqwest::Client::new();
+        let service = ReasoningService::new(http_client);
+
+        let model_config = create_model_config();
+        let mut request = create_request();
+        request.messages = vec![];
+
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        let service_clone = service.clone();
+        let model_config_clone = model_config.clone();
+        tokio::spawn(async move {
+            let _ = service_clone.stream_completion(request, &model_config_clone, sender).await;
+        });
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        assert!(receiver.try_recv().is_err(), "Channel should be closed on validation error");
+    }
+}
