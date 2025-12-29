@@ -1037,3 +1037,266 @@ async fn test_integration_response_missing_required_fields() {
         "Expected error from response missing required fields"
     );
 }
+
+#[tokio::test]
+async fn test_performance_concurrent_requests() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_response = sample_reasoning_response();
+    let answer_response = sample_answer_response();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&answer_response))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let num_requests = 10;
+    let start = tokio::time::Instant::now();
+
+    let mut handles = vec![];
+    for _ in 0..num_requests {
+        let service_clone = service.clone();
+        let request = sample_chat_request();
+        let model_config_clone = model_config.clone();
+
+        handles.push(tokio::spawn(async move {
+            let _ = service_clone
+                .create_completion(request, &model_config_clone)
+                .await;
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let duration = start.elapsed();
+
+    assert!(
+        duration.as_secs() < 10,
+        "Concurrent requests should complete in reasonable time, took {:?}",
+        duration
+    );
+
+    eprintln!("Completed {} requests in {:?}", num_requests, duration);
+}
+
+#[tokio::test]
+async fn test_performance_streaming_concurrent_requests() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_chunks = sample_reasoning_chunks();
+    let answer_chunks = sample_answer_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let mut answer_sse = String::new();
+    for chunk in &answer_chunks {
+        answer_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    answer_sse.push_str("data: [DONE]\n\n");
+
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let num_requests = 5;
+    let start = tokio::time::Instant::now();
+
+    let mut handles = vec![];
+    for _ in 0..num_requests {
+        let service_clone = service.clone();
+        let mut request = sample_chat_request();
+        request.stream = Some(true);
+        let model_config_clone = model_config.clone();
+
+        handles.push(tokio::spawn(async move {
+            let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+            let _ = service_clone
+                .stream_completion(request, &model_config_clone, sender)
+                .await;
+
+            let mut count = 0;
+            while let Some(result) = receiver.recv().await {
+                if let Ok(_) = result {
+                    count += 1;
+                    if count > 10 {
+                        break;
+                    }
+                }
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    let duration = start.elapsed();
+
+    assert!(
+        duration.as_secs() < 10,
+        "Concurrent streaming requests should complete in reasonable time, took {:?}",
+        duration
+    );
+
+    eprintln!("Completed {} streaming requests in {:?}", num_requests, duration);
+}
+
+#[tokio::test]
+async fn test_performance_request_throughput() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_response = sample_reasoning_response();
+    let answer_response = sample_answer_response();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&answer_response))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let num_requests = 20;
+    let start = tokio::time::Instant::now();
+
+    let mut success_count = 0;
+    let mut failure_count = 0;
+
+    for _ in 0..num_requests {
+        let service_clone = service.clone();
+        let request = sample_chat_request();
+        let model_config_clone = model_config.clone();
+
+        let result = service_clone
+            .create_completion(request, &model_config_clone)
+            .await;
+
+        match result {
+            Ok(_) => success_count += 1,
+            Err(_) => failure_count += 1,
+        }
+    }
+
+    let duration = start.elapsed();
+    let throughput = (success_count as f64) / duration.as_secs_f64();
+
+    assert_eq!(
+        failure_count, 0,
+        "All requests should succeed, had {} failures",
+        failure_count
+    );
+
+    assert!(
+        throughput > 1.0,
+        "Expected throughput > 1 request/second, got {:.2}",
+        throughput
+    );
+
+    eprintln!(
+        "Throughput: {:.2} requests/second ({} successes in {:?})",
+        throughput, success_count, duration
+    );
+}
+
+#[tokio::test]
+async fn test_performance_memory_stress() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_response = sample_reasoning_response();
+    let answer_response = sample_answer_response();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&answer_response))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let num_requests = 50;
+    let mut success_count = 0;
+
+    for i in 0..num_requests {
+        let service_clone = service.clone();
+        let request = sample_chat_request();
+        let model_config_clone = model_config.clone();
+
+        let result = service_clone
+            .create_completion(request, &model_config_clone)
+            .await;
+
+        if result.is_ok() {
+            success_count += 1;
+        }
+
+        if i % 10 == 0 && i > 0 {
+            eprintln!("Completed {} requests", i);
+        }
+    }
+
+    assert_eq!(
+        success_count, num_requests,
+        "All {} requests should succeed, got {}",
+        num_requests, success_count
+    );
+
+    eprintln!(
+        "Memory stress test completed: {} successful requests out of {}",
+        success_count, num_requests
+    );
+}
