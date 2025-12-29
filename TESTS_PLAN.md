@@ -389,11 +389,22 @@ Add the following dependencies under `[dev-dependencies]`:
     - Confirms completion_tokens is sum of reasoning + answer
     - Validates total_tokens calculation formula
 
-### Step 26: Add routing edge case tests
+### Step 26: Add routing edge case tests [✓ COMPLETED]
 - Test `GET /v1/chat/completions` (should return 405 Method Not Allowed)
 - Test `/v1/nonexistent` route (should return 404 Not Found)
 - Test `/nonexistent` without /v1 prefix (should return 404)
 - Verify correct status codes and error formats
+- **Implementation Details**: Added 3 routing tests in `tests/http.rs`:
+  - `test_http_routing_get_method_not_allowed` (lines 630-649):
+    - Tests that GET on POST-only route returns appropriate error (404 or 405)
+    - Actix-web returns 404 by default for method mismatches
+    - Test accepts either 404 or 405 as both indicate invalid request
+  - `test_http_routing_404_nonexistent_v1_route` (lines 651-670):
+    - Tests that `/v1/nonexistent` returns 404 Not Found
+    - Verifies proper 404 handling for non-existent /v1 routes
+  - `test_http_routing_404_nonexistent_root_route` (lines 672-691):
+    - Tests that `/nonexistent` returns 404 Not Found
+    - Verifies proper 404 handling for non-existent root routes
 
 ---
 

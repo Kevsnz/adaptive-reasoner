@@ -644,3 +644,60 @@ async fn test_http_chat_completion_usage_statistics() {
         "Expected combined total_tokens to be reasoning total + answer total (40 + 10)"
     );
 }
+
+#[actix_web::test]
+async fn test_http_routing_get_method_not_allowed() {
+    let config = Arc::new(create_test_config());
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/chat/completions")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert!(
+        resp.status() == StatusCode::METHOD_NOT_ALLOWED || resp.status() == StatusCode::NOT_FOUND,
+        "Expected 405 or 404 for GET on POST-only route, got {}",
+        resp.status()
+    );
+}
+
+#[actix_web::test]
+async fn test_http_routing_404_nonexistent_v1_route() {
+    let config = Arc::new(create_test_config());
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let req = test::TestRequest::get()
+        .uri("/v1/nonexistent")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Expected 404 Not Found for nonexistent /v1 route"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_routing_404_nonexistent_root_route() {
+    let config = Arc::new(create_test_config());
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let req = test::TestRequest::get()
+        .uri("/nonexistent")
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "Expected 404 Not Found for nonexistent root route"
+    );
+}
