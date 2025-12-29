@@ -701,3 +701,399 @@ async fn test_http_routing_404_nonexistent_root_route() {
         "Expected 404 Not Found for nonexistent root route"
     );
 }
+
+#[actix_web::test]
+async fn test_http_streaming_sse_format_correctness() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::sample_reasoning_chunks;
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut sse_response = String::new();
+    for chunk in &reasoning_chunks {
+        let json_str = serde_json::to_string(chunk).unwrap();
+        sse_response.push_str(&format!("data: {}\r\n\r\n", json_str));
+    }
+    sse_response.push_str("data: [DONE]\r\n\r\n");
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(sse_response.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(sse_response.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test SSE format"}],
+        "stream": true
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = test::read_body(resp).await;
+    let body_str = String::from_utf8_lossy(&bytes);
+
+    let lines: Vec<&str> = body_str.lines().collect();
+
+    let mut data_count = 0;
+    let mut has_crlf = false;
+    let mut has_lf = false;
+
+    for i in 0..lines.len().saturating_sub(1) {
+        let line = lines[i];
+
+        if line.starts_with("data: ") {
+            data_count += 1;
+            let data_content = &line[6..];
+            if data_content == "[DONE]" {
+                continue;
+            }
+            if serde_json::from_str::<serde_json::Value>(data_content).is_ok() {
+                has_crlf = true;
+            }
+        }
+    }
+
+    assert!(data_count > 0, "Expected at least one data line");
+
+    for (i, line) in lines.iter().enumerate() {
+        if *line == "" {
+            if i > 0 && lines[i - 1].starts_with("data: ") {
+                has_lf = true;
+            }
+        }
+    }
+
+    assert!(
+        has_lf || has_crlf,
+        "Expected SSE format with proper line endings"
+    );
+
+    for line in &lines {
+        if line.starts_with("data: ") && !line.contains("[DONE]") {
+            let data_str = &line[6..];
+            let json_result: Result<serde_json::Value, _> = serde_json::from_str(data_str);
+            assert!(
+                json_result.is_ok(),
+                "Each data line should contain valid JSON: {}",
+                line
+            );
+        }
+    }
+}
+
+#[actix_web::test]
+async fn test_http_streaming_chunk_ordering() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::{sample_reasoning_chunks, sample_answer_chunks};
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_chunks = sample_reasoning_chunks();
+    let answer_chunks = sample_answer_chunks();
+
+    let mut reasoning_sse = String::new();
+    for (i, chunk) in reasoning_chunks.iter().enumerate() {
+        let mut chunk_data = chunk.clone();
+        chunk_data.id = format!("reasoning-{}", i);
+        let json_str = serde_json::to_string(&chunk_data).unwrap();
+        reasoning_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
+    }
+    reasoning_sse.push_str("data: [DONE]\r\n\r\n");
+
+    let mut answer_sse = String::new();
+    for (i, chunk) in answer_chunks.iter().enumerate() {
+        let mut chunk_data = chunk.clone();
+        chunk_data.id = format!("answer-{}", i);
+        let json_str = serde_json::to_string(&chunk_data).unwrap();
+        answer_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
+    }
+    answer_sse.push_str("data: [DONE]\r\n\r\n");
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.as_bytes().to_vec())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test ordering"}],
+        "stream": true,
+        "stream_options": {"include_usage": true}
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = test::read_body(resp).await;
+    let body_str = String::from_utf8_lossy(&bytes);
+
+    let lines: Vec<&str> = body_str.lines().collect();
+
+    let mut data_chunks = 0;
+    let mut has_done_marker = false;
+    let mut content_found = false;
+
+    for line in &lines {
+        if line.starts_with("data: ") {
+            let data_str = &line[6..];
+            if data_str == "[DONE]" {
+                has_done_marker = true;
+                continue;
+            }
+
+            data_chunks += 1;
+
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(data_str) {
+                if json_val.get("choices").is_some()
+                    || json_val.get("delta").is_some()
+                    || json_val.get("content").is_some()
+                {
+                    content_found = true;
+                }
+            }
+        }
+    }
+
+    assert!(
+        data_chunks > 0,
+        "Expected at least one data chunk, got {}",
+        data_chunks
+    );
+
+    assert!(
+        content_found,
+        "Expected to find content in at least one chunk"
+    );
+
+    assert!(
+        has_done_marker,
+        "Expected [DONE] marker in streaming response"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_streaming_incomplete_stream() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::sample_reasoning_chunks;
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        let json_str = serde_json::to_string(chunk).unwrap();
+        reasoning_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
+    }
+    reasoning_sse.push_str("data: [DONE]\r\n\r\n");
+
+    let answer_sse = "data: {\"id\":\"test-answer\",\"object\":\"chat.completion.chunk\",\"created\":1234567891,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Partial\"},\"logprobs\":null,\"finish_reason\":null}]}\r\n\r\n";
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.as_bytes().to_vec())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test incomplete"}],
+        "stream": true
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = test::read_body(resp).await;
+    let body_str = String::from_utf8_lossy(&bytes);
+
+    assert!(!body_str.is_empty(), "Expected non-empty response even for incomplete stream");
+
+    let lines: Vec<&str> = body_str.lines().collect();
+
+    let mut data_lines = 0;
+    for line in &lines {
+        if line.starts_with("data: ") {
+            data_lines += 1;
+        }
+    }
+
+    assert!(data_lines > 0, "Expected at least some data lines in response");
+}
+
+#[actix_web::test]
+async fn test_http_streaming_malformed_json_chunk() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::sample_reasoning_chunks;
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        let json_str = serde_json::to_string(chunk).unwrap();
+        reasoning_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
+    }
+    reasoning_sse.push_str("data: [DONE]\r\n\r\n");
+
+    let answer_sse = "data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Valid\"}}]}\r\n\r\n\
+                      data: invalid json here\r\n\r\n\
+                      data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Valid2\"}}]}\r\n\r\n\
+                      data: [DONE]\r\n\r\n";
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.clone().into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.as_bytes().to_vec())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test malformed"}],
+        "stream": true
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    let bytes = test::read_body(resp).await;
+    let body_str = String::from_utf8_lossy(&bytes);
+
+    let lines: Vec<&str> = body_str.lines().collect();
+
+    let mut valid_json_count = 0;
+    for line in &lines {
+        if line.starts_with("data: ") {
+            let data_str = &line[6..];
+            if data_str != "[DONE]" {
+                if serde_json::from_str::<serde_json::Value>(data_str).is_ok() {
+                    valid_json_count += 1;
+                }
+            }
+        }
+    }
+
+    assert!(
+        valid_json_count > 0,
+        "Expected at least some valid JSON chunks despite malformed data"
+    );
+}

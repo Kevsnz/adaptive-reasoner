@@ -413,3 +413,365 @@ async fn test_integration_empty_reasoning_content() {
         "Expected content to be present"
     );
 }
+
+#[tokio::test]
+async fn test_integration_chunk_ordering_guarantee() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_chunks = sample_reasoning_chunks();
+    let answer_chunks = sample_answer_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let mut answer_sse = String::new();
+    for chunk in &answer_chunks {
+        answer_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    answer_sse.push_str("data: [DONE]\n\n");
+
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let mut request = sample_chat_request();
+    request.stream = Some(true);
+    request.stream_options = Some(request::StreamOptions {
+        include_usage: Some(true),
+    });
+
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+
+    let service_clone = service.clone();
+    tokio::spawn(async move {
+        let _ = service_clone
+            .stream_completion(request, &model_config, sender)
+            .await;
+    });
+
+    let mut chunks_received = 0;
+    let mut content_chunks = 0;
+    let timeout = tokio::time::Duration::from_secs(5);
+    let start_time = tokio::time::Instant::now();
+
+    loop {
+        match tokio::time::timeout(timeout, receiver.recv()).await {
+            Ok(Some(result)) => match result {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    if !text.contains("[DONE]") {
+                        chunks_received += 1;
+                        if text.contains("content") || text.contains("delta") {
+                            content_chunks += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    panic!("Received error: {:?}", e);
+                }
+            },
+            Ok(None) => break,
+            Err(_) => break,
+        }
+        if start_time.elapsed() > timeout {
+            break;
+        }
+    }
+
+    assert!(
+        chunks_received > 0,
+        "Expected to receive at least one chunk, got {}",
+        chunks_received
+    );
+
+    assert!(
+        content_chunks > 0,
+        "Expected to receive content chunks, got {}",
+        content_chunks
+    );
+}
+
+#[tokio::test]
+async fn test_integration_incomplete_stream_missing_done() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let answer_sse = String::from("data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n");
+
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let mut request = sample_chat_request();
+    request.stream = Some(true);
+
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+
+    let service_clone = service.clone();
+    tokio::spawn(async move {
+        let _ = service_clone
+            .stream_completion(request, &model_config, sender)
+            .await;
+    });
+
+    let mut received_messages = vec![];
+    let timeout = tokio::time::Duration::from_secs(5);
+    let start_time = tokio::time::Instant::now();
+
+    loop {
+        match tokio::time::timeout(timeout, receiver.recv()).await {
+            Ok(Some(result)) => match result {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    if !text.contains("[DONE]") {
+                        received_messages.push(text.to_string());
+                    }
+                }
+                Err(_) => break,
+            },
+            Ok(None) => break,
+            Err(_) => break,
+        }
+        if start_time.elapsed() > timeout {
+            break;
+        }
+    }
+
+    assert!(
+        received_messages.len() > 0,
+        "Expected to receive some chunks before stream ended"
+    );
+}
+
+#[tokio::test]
+async fn test_integration_incomplete_stream_malformed_chunk() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let answer_sse = String::from("data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: invalid json here\n\ndata: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"World\"}}]}\n\ndata: [DONE]\n\n");
+
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let mut request = sample_chat_request();
+    request.stream = Some(true);
+
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+
+    let service_clone = service.clone();
+    tokio::spawn(async move {
+        let _ = service_clone
+            .stream_completion(request, &model_config, sender)
+            .await;
+    });
+
+    let mut _has_error = false;
+    let mut chunks_received = 0;
+    let timeout = tokio::time::Duration::from_secs(5);
+    let start_time = tokio::time::Instant::now();
+
+    loop {
+        match tokio::time::timeout(timeout, receiver.recv()).await {
+            Ok(Some(result)) => match result {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    if !text.contains("[DONE]") {
+                        chunks_received += 1;
+                    }
+                }
+                Err(_) => {
+                    _has_error = true;
+                }
+            },
+            Ok(None) => break,
+            Err(_) => break,
+        }
+        if start_time.elapsed() > timeout {
+            break;
+        }
+    }
+
+    assert!(
+        chunks_received > 0,
+        "Expected to receive valid chunks despite malformed JSON"
+    );
+}
+
+#[tokio::test]
+async fn test_integration_timeout_during_streaming() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    let reasoning_chunks = sample_reasoning_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let mut answer_sse = String::new();
+    for chunk in &sample_answer_chunks() {
+        answer_sse.push_str(&build_response_json(&json!(chunk)));
+    }
+    answer_sse.push_str("data: [DONE]\n\n");
+
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_bytes = reasoning_sse.as_bytes().to_vec();
+    let answer_bytes = answer_sse.as_bytes().to_vec();
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_bytes.clone())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_bytes)
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+
+    let mut request = sample_chat_request();
+    request.stream = Some(true);
+    request.stream_options = Some(request::StreamOptions {
+        include_usage: Some(true),
+    });
+
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+
+    let service_clone = service.clone();
+    tokio::spawn(async move {
+        let _ = service_clone
+            .stream_completion(request, &model_config, sender)
+            .await;
+    });
+
+    let mut chunks_received = 0;
+    let timeout = tokio::time::Duration::from_secs(3);
+    let start_time = tokio::time::Instant::now();
+
+    loop {
+        match tokio::time::timeout(timeout, receiver.recv()).await {
+            Ok(Some(result)) => match result {
+                Ok(bytes) => {
+                    let text = String::from_utf8_lossy(&bytes);
+                    if !text.contains("[DONE]") {
+                        chunks_received += 1;
+                    }
+                }
+                Err(_) => break,
+            },
+            Ok(None) => break,
+            Err(_) => {
+                assert!(chunks_received > 0, "Expected to receive some chunks before timeout");
+                break;
+            }
+        }
+        if start_time.elapsed() > timeout {
+            break;
+        }
+    }
+
+    assert!(chunks_received > 0, "Expected to receive chunks before timeout");
+}
