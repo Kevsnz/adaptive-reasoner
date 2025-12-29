@@ -379,13 +379,31 @@ Add the following dependencies under `[dev-dependencies]`:
   - Updated `src/handlers.rs` to use `CHANNEL_BUFFER_SIZE` constant
   - Updated `tests/integration.rs` to use `CHANNEL_BUFFER_SIZE` constant
 
-### Step 28: Add conditional compilation for test mode
+### Step 28: Add conditional compilation for test mode [✓ COMPLETED]
 - Create `src/test_utils/mod.rs` with `#[cfg(test)]`
 - Add test-specific helpers:
   - Helper functions to create test requests
   - Helper functions to create test configs
   - Assertion helpers for responses
 - Ensure test utils are excluded from production builds
+- **Implementation Details**:
+  - Created `src/test_utils/mod.rs` with `#[cfg(test)]` attribute
+  - Created `src/test_utils/helpers.rs` with functions:
+    - `create_test_chat_request()` - Creates test chat completion requests
+    - `create_test_model_config()` - Creates test model configuration
+    - `create_test_config_with_model()` - Creates test config with single model
+    - `create_test_model_config_with_extra()` - Creates test config with extra params
+    - `create_empty_messages_request()` - Creates invalid request for validation tests
+    - `create_assistant_last_request()` - Creates invalid request ending with assistant message
+  - Created `src/test_utils/assertions.rs` with functions:
+    - `assert_chat_completion_response()` - Validates chat completion structure
+    - `assert_usage()` - Validates usage statistics
+    - `assert_streaming_chunks()` - Validates streaming chunks
+    - `assert_final_chunk()` - Validates final chunk has finish_reason and usage
+    - `assert_choice_structure()` - Validates choice structure
+    - `assert_chunk_choice_structure()` - Validates chunk choice structure
+  - Added `#[cfg(test)] pub mod test_utils;` to `src/lib.rs`
+  - Verified test_utils module is excluded from `cargo build --release`
 
 ### Step 29: Create testing documentation in `TESTING.md`
 - Document test execution commands:
