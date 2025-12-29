@@ -1,12 +1,6 @@
-use actix_web::web::Bytes;
-use tokio::sync::mpsc::Sender;
-
 use crate::config;
 use crate::errors::ReasonerError;
 use crate::models::request;
-use crate::models::response_direct::ChatCompletion;
-
-use crate::service::ReasoningService;
 
 pub(crate) fn calculate_remaining_tokens(max_tokens: Option<i32>, reasoning_tokens: i32) -> i32 {
     max_tokens.unwrap_or(crate::consts::DEFAULT_MAX_TOKENS) - reasoning_tokens
@@ -76,24 +70,7 @@ pub(crate) fn validate_chat_request(
     Ok(())
 }
 
-pub(crate) async fn create_chat_completion(
-    http_client: reqwest::Client,
-    request: request::ChatCompletionCreate,
-    model_config: &config::ModelConfig,
-) -> Result<ChatCompletion, ReasonerError> {
-    let service = ReasoningService::new(http_client);
-    service.create_completion(request, model_config).await
-}
 
-pub(crate) async fn stream_chat_completion(
-    http_client: reqwest::Client,
-    request: request::ChatCompletionCreate,
-    model_config: &config::ModelConfig,
-    sender: Sender<Result<Bytes, ReasonerError>>,
-) -> Result<(), ReasonerError> {
-    let service = ReasoningService::new(http_client);
-    service.stream_completion(request, model_config, sender).await
-}
 
 #[cfg(test)]
 mod tests {
