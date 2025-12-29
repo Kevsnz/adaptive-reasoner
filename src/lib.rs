@@ -7,6 +7,3 @@ pub mod llm_client;
 pub mod llm_request;
 pub mod models;
 pub mod service;
-
-#[cfg(test)]
-pub mod test_utils;
