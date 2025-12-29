@@ -775,3 +775,265 @@ async fn test_integration_timeout_during_streaming() {
 
     assert!(chunks_received > 0, "Expected to receive chunks before timeout");
 }
+
+#[tokio::test]
+async fn test_integration_http_error_401_unauthorized() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": {
+                "message": "Invalid API key",
+                "type": "invalid_request_error"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 401 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 401"), "Expected 401 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_http_error_403_forbidden() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+            "error": {
+                "message": "Access forbidden",
+                "type": "permission_error"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 403 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 403"), "Expected 403 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_http_error_404_not_found() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "error": {
+                "message": "Model not found",
+                "type": "invalid_request_error"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 404 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 404"), "Expected 404 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_http_error_429_rate_limit() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {
+                "message": "Rate limit exceeded",
+                "type": "rate_limit_error"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 429 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 429"), "Expected 429 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_http_error_502_bad_gateway() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(502).set_body_json(json!({
+            "error": {
+                "message": "Bad gateway",
+                "type": "gateway_error"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 502 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 502"), "Expected 502 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_http_error_503_service_unavailable() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+            "error": {
+                "message": "Service temporarily unavailable",
+                "type": "service_unavailable"
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from 503 response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains("status 503"), "Expected 503 status in error");
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_empty_response_body() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(""))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from empty response");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ParseError(_) |
+        adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
+        _ => panic!("Expected ParseError or ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_invalid_json_response() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{bad json"))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from invalid JSON");
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ParseError(_) |
+        adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
+        _ => panic!("Expected ParseError or ApiError variant"),
+    }
+}
+
+#[tokio::test]
+async fn test_integration_response_missing_required_fields() {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "test-id",
+            "object": "chat.completion"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(
+        result.is_err(),
+        "Expected error from response missing required fields"
+    );
+}

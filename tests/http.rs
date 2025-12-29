@@ -1097,3 +1097,247 @@ async fn test_http_streaming_malformed_json_chunk() {
         "Expected at least some valid JSON chunks despite malformed data"
     );
 }
+
+#[actix_web::test]
+async fn test_http_error_401_unauthorized() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(
+            json!({"error": {"message": "Invalid API key", "type": "invalid_request_error"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_403_forbidden() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(403).set_body_json(
+            json!({"error": {"message": "Access forbidden", "type": "permission_error"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_404_model_not_found() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(
+            json!({"error": {"message": "Model not found", "type": "invalid_request_error"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_429_rate_limit() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(
+            json!({"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_502_bad_gateway() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(502).set_body_json(
+            json!({"error": {"message": "Bad gateway", "type": "gateway_error"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_503_service_unavailable() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(
+            json!({"error": {"message": "Service temporarily unavailable", "type": "service_unavailable"}}),
+        ))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_empty_response_body() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(""))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
+
+#[actix_web::test]
+async fn test_http_error_invalid_json_response() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("{invalid json response}"))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}

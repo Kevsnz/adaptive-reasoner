@@ -513,13 +513,35 @@ Add the following dependencies under `[dev-dependencies]`:
     - `test_http_streaming_incomplete_stream()` - Tests incomplete stream handling
     - `test_http_streaming_malformed_json_chunk()` - Tests malformed JSON in streaming responses
 - All tests verify streaming response correctness, chunk ordering guarantees, incomplete stream handling, and timeout scenarios
-- Total tests: 30 (12 integration + 18 HTTP) all passing
+- Total tests: 62 (24 unit + 18 HTTP + 20 integration) all passing
 
-### Step 32: Add error scenario coverage
+### Step 32: Add error scenario coverage [✓ COMPLETED]
 - Test various HTTP error codes
 - Test network failure scenarios
 - Test malformed responses
 - Test timeout errors
+- **Implementation Details**: Added 14 comprehensive error scenario tests:
+  - Integration tests (tests/integration.rs):
+    - `test_integration_http_error_401_unauthorized()` - 401 Unauthorized error handling
+    - `test_integration_http_error_403_forbidden()` - 403 Forbidden error handling
+    - `test_integration_http_error_404_not_found()` - 404 Not Found error handling
+    - `test_integration_http_error_429_rate_limit()` - 429 Rate Limit error handling
+    - `test_integration_http_error_502_bad_gateway()` - 502 Bad Gateway error handling
+    - `test_integration_http_error_503_service_unavailable()` - 503 Service Unavailable error handling
+    - `test_integration_empty_response_body()` - Empty response body handling
+    - `test_integration_invalid_json_response()` - Invalid JSON response handling
+    - `test_integration_response_missing_required_fields()` - Response missing required fields
+  - HTTP layer tests (tests/http.rs):
+    - `test_http_error_401_unauthorized()` - 401 error at HTTP layer (returns BAD_GATEWAY)
+    - `test_http_error_403_forbidden()` - 403 error at HTTP layer
+    - `test_http_error_404_model_not_found()` - 404 error at HTTP layer
+    - `test_http_error_429_rate_limit()` - 429 error at HTTP layer
+    - `test_http_error_502_bad_gateway()` - 502 error at HTTP layer
+    - `test_http_error_503_service_unavailable()` - 503 error at HTTP layer
+    - `test_http_error_empty_response_body()` - Empty response body at HTTP layer
+    - `test_http_error_invalid_json_response()` - Invalid JSON response at HTTP layer
+- All tests verify proper error handling across HTTP status codes (401, 403, 404, 429, 500, 502, 503), malformed responses, empty responses, and invalid JSON
+- Total tests: 71 (24 unit + 26 HTTP + 21 integration) all passing
 
 ### Step 33: Performance and load tests
 - Add basic performance benchmarks
