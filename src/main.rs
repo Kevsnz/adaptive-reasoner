@@ -22,8 +22,8 @@ async fn main() -> std::io::Result<()> {
     let model_config = config::load_config().expect("Failed to load config");
 
     let http_client = reqwest::Client::builder()
-        .connect_timeout(Duration::new(30, 0))
-        .read_timeout(Duration::new(60, 0))
+        .connect_timeout(Duration::new(consts::CONNECT_TIMEOUT_SECS, 0))
+        .read_timeout(Duration::new(consts::READ_TIMEOUT_SECS, 0))
         .build()
         .unwrap();
 
@@ -34,5 +34,5 @@ async fn main() -> std::io::Result<()> {
 
     let server = actix_web::HttpServer::new(app_factory);
 
-    server.bind(("0.0.0.0", 8080))?.run().await
+    server.bind(("0.0.0.0", consts::SERVER_PORT))?.run().await
 }

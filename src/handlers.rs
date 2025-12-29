@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::config;
+use crate::consts;
 use crate::errors::ReasonerError;
 use crate::models::{model_list, request};
 use crate::service::ReasoningService;
@@ -42,7 +43,8 @@ pub async fn chat_completion(
     log::debug!("request: {:?}", request.0);
 
     if request.stream.unwrap_or(false) {
-        let (sender, receiver) = mpsc::channel::<Result<Bytes, ReasonerError>>(100);
+        let (sender, receiver) =
+            mpsc::channel::<Result<Bytes, ReasonerError>>(consts::CHANNEL_BUFFER_SIZE);
         actix_web::rt::spawn(async move {
             if let Err(e) = service
                 .stream_completion(request.0, &model_config, sender)

@@ -1,4 +1,5 @@
 use adaptive_reasoner::config::ModelConfig;
+use adaptive_reasoner::consts;
 use adaptive_reasoner::models::request;
 use adaptive_reasoner::service::ReasoningService;
 use reqwest::Client;
@@ -130,7 +131,7 @@ async fn test_integration_streaming_flow_with_multiple_chunks() {
         include_usage: Some(true),
     });
 
-    let (sender, mut receiver) = mpsc::channel(100);
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
 
     let service_clone = service.clone();
     tokio::spawn(async move {

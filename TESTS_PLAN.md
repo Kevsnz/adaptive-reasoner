@@ -365,7 +365,7 @@ Add the following dependencies under `[dev-dependencies]`:
 
 ## Phase 9: Final Polish
 
-### Step 27: Extract remaining magic numbers to constants
+### Step 27: Extract remaining magic numbers to constants [✓ COMPLETED]
 - Add to `src/consts.rs`:
   - `CONNECT_TIMEOUT_SECS: u64 = 30`
   - `READ_TIMEOUT_SECS: u64 = 60`
@@ -373,6 +373,11 @@ Add the following dependencies under `[dev-dependencies]`:
   - `DEFAULT_MAX_TOKENS: i32 = 1024 * 1024`
 - Replace magic numbers in `main.rs` with constants
 - Document what each constant controls
+- **Technical Note**: 
+  - Added `SERVER_PORT: u16 = 8080` constant
+  - Made `CHANNEL_BUFFER_SIZE` public (`pub`) for test access
+  - Updated `src/handlers.rs` to use `CHANNEL_BUFFER_SIZE` constant
+  - Updated `tests/integration.rs` to use `CHANNEL_BUFFER_SIZE` constant
 
 ### Step 28: Add conditional compilation for test mode
 - Create `src/test_utils/mod.rs` with `#[cfg(test)]`
