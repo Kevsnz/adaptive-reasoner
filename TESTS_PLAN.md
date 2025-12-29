@@ -334,12 +334,18 @@ Add the following dependencies under `[dev-dependencies]`:
   - Step 26: Routing edge case tests (404, 405, etc.)
 - These steps are marked as future enhancements since current coverage is sufficient for basic functionality testing.
 
-### Step 23: Add non-streaming chat completion test [FUTURE]
+### Step 23: Add non-streaming chat completion test [✓ COMPLETED]
 - Use wiremock to test complete non-streaming flow with actual HTTP client
 - Test successful completion with reasoning and answer phases
 - Verify response body structure and content
 - Check combined reasoning + answer text is correct
 - Validate usage statistics are combined correctly
+- **Implementation Details**: Added `test_http_chat_completion_non_streaming` in `tests/http.rs` (lines 157-220):
+  - Sets up wiremock server with reasoning and answer response fixtures
+  - Creates HTTP request to `/v1/chat/completions` with `stream: false`
+  - Verifies complete response structure (id, object, model, choices)
+  - Validates that combined reasoning + answer content is present in response
+  - Confirms usage statistics are correctly aggregated (prompt_tokens: 10, completion_tokens: 80, total_tokens: 90)
 
 ### Step 24: Add streaming chat completion test
 - Use wiremock to test complete streaming flow

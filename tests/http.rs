@@ -152,3 +152,78 @@ async fn test_http_chat_completion_api_error() {
     let resp = test::call_service(&app, req).await;
     assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 }
+
+#[actix_web::test]
+async fn test_http_chat_completion_non_streaming() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_reasoning_response()))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_answer_response()))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Hello, how are you?"}],
+        "stream": false
+    });
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    use adaptive_reasoner::models::response_direct::ChatCompletion;
+    let body: ChatCompletion = test::read_body_json(resp).await;
+
+    assert_eq!(body.id, "chatcmpl-test-1");
+    assert_eq!(body.object, "chat.completion");
+    assert_eq!(body.model, "test-model");
+    assert_eq!(body.choices.len(), 1);
+
+    let choice = &body.choices[0];
+    assert_eq!(choice.index, 0);
+    assert_eq!(
+        choice.finish_reason,
+        adaptive_reasoner::models::FinishReason::Stop
+    );
+
+    let assistant = &choice.message;
+    assert!(
+        assistant.content.is_some(),
+        "Expected content to be present"
+    );
+    let content = assistant.content.as_ref().unwrap();
+    assert!(
+        content.contains("Let me think about this carefully..."),
+        "Expected reasoning content in response"
+    );
+    assert!(
+        content.contains("I'm doing great, thank you!"),
+        "Expected answer content in response"
+    );
+
+    assert_eq!(body.usage.prompt_tokens, 10);
+    assert_eq!(body.usage.completion_tokens, 80);
+    assert_eq!(body.usage.total_tokens, 90);
+}
