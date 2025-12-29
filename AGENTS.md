@@ -109,3 +109,4 @@ The service implements a two-phase completion:
 Reasoning content is either inline in content with `\<think\>` tags or in a separate `reasoning_content` field based on the `reasoning` feature flag.
 
 Detailed map of the project could be found in [PROJECTMAP.md](PROJECTMAP.md).
+Comprehensive guidance for testing the Adaptive Reasoner codebase could be found in [TESTING.md](TESTING.md).
