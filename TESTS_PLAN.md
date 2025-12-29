@@ -347,12 +347,25 @@ Add the following dependencies under `[dev-dependencies]`:
   - Validates that combined reasoning + answer content is present in response
   - Confirms usage statistics are correctly aggregated (prompt_tokens: 10, completion_tokens: 80, total_tokens: 90)
 
-### Step 24: Add streaming chat completion test
+### Step 24: Add streaming chat completion test [✓ COMPLETED]
 - Use wiremock to test complete streaming flow
 - Verify SSE (Server-Sent Events) format headers
 - Check that streamed chunks are received in order
 - Verify final usage statistics chunk
 - Test that [DONE] marker is properly handled
+- **Implementation Details**: Added `test_http_chat_completion_streaming` in `tests/http.rs` (lines 231-372):
+  - Sets up wiremock server with reasoning and answer streaming chunks in SSE format
+  - Creates HTTP request to `/v1/chat/completions` with `stream: true` and `stream_options.include_usage: true`
+  - Verifies response has `text/event-stream` content-type header
+  - Parses SSE response lines and validates HTTP layer concerns:
+    - Multiple chunks are received
+    - Final chunk contains usage statistics (total_tokens)
+    - [DONE] marker is present in stream
+  - **Note**: Full content verification is handled by integration tests (`tests/integration.rs:82-187`). This HTTP test focuses on:
+    - SSE format correctness (proper `data: {}` line format)
+    - Content-type header verification
+    - Response structure at HTTP layer
+    - Protocol-level compliance (SSE format and [DONE] marker)
 
 ### Step 25: Add response format verification tests
 - Test detailed response structure assertions

@@ -227,3 +227,133 @@ async fn test_http_chat_completion_non_streaming() {
     assert_eq!(body.usage.completion_tokens, 80);
     assert_eq!(body.usage.total_tokens, 90);
 }
+
+#[actix_web::test]
+async fn test_http_chat_completion_streaming() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::{sample_reasoning_chunks, sample_answer_chunks};
+    use reqwest::header::{CONTENT_TYPE, HeaderValue};
+
+    let reasoning_chunks = sample_reasoning_chunks();
+    let answer_chunks = sample_answer_chunks();
+
+    let mut reasoning_sse = String::new();
+    for chunk in &reasoning_chunks {
+        reasoning_sse.push_str(&format!("data: {}\n\n", serde_json::to_string(chunk).unwrap()));
+    }
+    reasoning_sse.push_str("data: [DONE]\n\n");
+
+    let mut answer_sse = String::new();
+    for chunk in &answer_chunks {
+        answer_sse.push_str(&format!("data: {}\n\n", serde_json::to_string(chunk).unwrap()));
+    }
+    answer_sse.push_str("data: [DONE]\n\n");
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(reasoning_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(answer_sse.into_bytes())
+                .insert_header(CONTENT_TYPE, HeaderValue::from_static("text/event-stream")),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Hello, how are you?"}],
+        "stream": true,
+        "stream_options": {"include_usage": true}
+    });
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    use actix_web::http::header;
+    let content_type = resp
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    assert!(
+        content_type.is_some_and(|ct| ct.contains("text/event-stream")),
+        "Expected text/event-stream content type"
+    );
+
+    let bytes = test::read_body(resp).await;
+    let body_str = String::from_utf8_lossy(&bytes);
+
+    let lines: Vec<&str> = body_str.lines().collect();
+
+    assert!(
+        !lines.is_empty(),
+        "Expected to receive streaming response lines"
+    );
+
+    let mut chunk_count = 0;
+    let mut has_final_usage = false;
+    let mut has_done_marker = false;
+
+    for i in (0..lines.len()).step_by(2) {
+        if i + 1 < lines.len() {
+            let line = lines[i];
+            let _empty_line = lines[i + 1];
+
+            if line.starts_with("data: ") {
+                let data_str = &line[6..];
+                if data_str == "[DONE]" {
+                    has_done_marker = true;
+                } else if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(data_str) {
+                    chunk_count += 1;
+
+                    if let Some(usage) = json_val.get("usage") {
+                        has_final_usage = true;
+                        assert!(
+                            usage.get("total_tokens").is_some(),
+                            "Expected total_tokens in final usage"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        chunk_count > 0,
+        "Expected at least one chunk, got {}",
+        chunk_count
+    );
+
+    assert!(has_final_usage, "Expected final chunk with usage statistics");
+
+    assert!(
+        has_done_marker,
+        "Expected [DONE] marker in streaming response"
+    );
+
+    eprintln!("Received {} streaming chunks", chunk_count);
+}
