@@ -357,3 +357,290 @@ async fn test_http_chat_completion_streaming() {
 
     eprintln!("Received {} streaming chunks", chunk_count);
 }
+
+#[actix_web::test]
+async fn test_http_chat_completion_response_format() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_reasoning_response()))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_answer_response()))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    use adaptive_reasoner::models::response_direct::ChatCompletion;
+    let body: ChatCompletion = test::read_body_json(resp).await;
+
+    assert!(!body.id.is_empty(), "Response id should not be empty");
+    assert_eq!(body.id, "chatcmpl-test-1", "Expected correct response id");
+
+    assert_eq!(body.object, "chat.completion", "Expected correct object type");
+    assert_eq!(body.model, "test-model", "Expected model name to match");
+
+    assert!(body.created > 0, "Created timestamp should be positive");
+    assert_eq!(body.created, 1234567890, "Expected correct created timestamp");
+
+    assert_eq!(body.choices.len(), 1, "Expected exactly one choice");
+    let choice = &body.choices[0];
+
+    assert_eq!(choice.index, 0, "Expected choice index to be 0");
+    assert!(
+        choice.logprobs.is_none(),
+        "Expected logprobs to be None for this test"
+    );
+
+    assert_eq!(
+        choice.finish_reason,
+        adaptive_reasoner::models::FinishReason::Stop,
+        "Expected finish_reason to be Stop"
+    );
+
+    let assistant = &choice.message;
+    assert!(
+        assistant.content.is_some(),
+        "Expected assistant message to have content"
+    );
+    assert!(
+        assistant.tool_calls.is_none(),
+        "Expected no tool calls in this test"
+    );
+
+    assert_eq!(
+        body.usage.prompt_tokens, 10,
+        "Expected prompt_tokens to be 10"
+    );
+    assert_eq!(
+        body.usage.completion_tokens, 80,
+        "Expected completion_tokens to be 80"
+    );
+    assert_eq!(
+        body.usage.total_tokens, 90,
+        "Expected total_tokens to be 90"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_chat_completion_finish_reason_variants() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use adaptive_reasoner::models::response_direct::{ChatCompletion, Choice};
+    use adaptive_reasoner::models::{FinishReason, Usage};
+    use adaptive_reasoner::models::request;
+
+    let length_reason_response = ChatCompletion {
+        id: "chatcmpl-length".to_string(),
+        object: "chat.completion".to_string(),
+        created: 1234567891,
+        model: "test-model".to_string(),
+        choices: vec![Choice {
+            index: 0,
+            message: request::MessageAssistant {
+                reasoning_content: None,
+                content: Some("Partial".to_string()),
+                tool_calls: None,
+            },
+            logprobs: None,
+            finish_reason: FinishReason::Length,
+        }],
+        usage: Usage {
+            prompt_tokens: 10,
+            completion_tokens: 100,
+            total_tokens: 110,
+        },
+    };
+
+    let reasoning_response = ChatCompletion {
+        id: "chatcmpl-length-reason".to_string(),
+        object: "chat.completion".to_string(),
+        created: 1234567892,
+        model: "test-model".to_string(),
+        choices: vec![Choice {
+            index: 0,
+            message: request::MessageAssistant {
+                reasoning_content: None,
+                content: Some("Reasoning".to_string()),
+                tool_calls: None,
+            },
+            logprobs: None,
+            finish_reason: FinishReason::Length,
+        }],
+        usage: Usage {
+            prompt_tokens: 10,
+            completion_tokens: 200,
+            total_tokens: 210,
+        },
+    };
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&length_reason_response))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test length"}],
+        "max_tokens": 50
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: ChatCompletion = test::read_body_json(resp).await;
+    assert_eq!(
+        body.choices[0].finish_reason,
+        FinishReason::Length,
+        "Expected Length finish_reason when reasoning exceeds budget"
+    );
+}
+
+#[actix_web::test]
+async fn test_http_chat_completion_usage_statistics() {
+    let mock_server = MockServer::start().await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    use adaptive_reasoner::models::response_direct::{ChatCompletion, Choice};
+    use adaptive_reasoner::models::Usage;
+    use adaptive_reasoner::models::request;
+
+    let reasoning_response = ChatCompletion {
+        id: "chatcmpl-reason".to_string(),
+        object: "chat.completion".to_string(),
+        created: 1234567890,
+        model: "test-model".to_string(),
+        choices: vec![Choice {
+            index: 0,
+            message: request::MessageAssistant {
+                reasoning_content: None,
+                content: Some("Reasoning".to_string()),
+                tool_calls: None,
+            },
+            logprobs: None,
+            finish_reason: adaptive_reasoner::models::FinishReason::Stop,
+        }],
+        usage: Usage {
+            prompt_tokens: 15,
+            completion_tokens: 25,
+            total_tokens: 40,
+        },
+    };
+
+    let answer_response = ChatCompletion {
+        id: "chatcmpl-answer".to_string(),
+        object: "chat.completion".to_string(),
+        created: 1234567891,
+        model: "test-model".to_string(),
+        choices: vec![Choice {
+            index: 0,
+            message: request::MessageAssistant {
+                reasoning_content: None,
+                content: Some("Answer".to_string()),
+                tool_calls: None,
+            },
+            logprobs: None,
+            finish_reason: adaptive_reasoner::models::FinishReason::Stop,
+        }],
+        usage: Usage {
+            prompt_tokens: 15,
+            completion_tokens: 10,
+            total_tokens: 25,
+        },
+    };
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&answer_response))
+        .mount(&mock_server)
+        .await;
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body = json!({
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "Test"}]
+    });
+
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let body: ChatCompletion = test::read_body_json(resp).await;
+
+    assert_eq!(
+        body.usage.prompt_tokens, 15,
+        "Expected combined prompt_tokens to match reasoning phase"
+    );
+    assert_eq!(
+        body.usage.completion_tokens, 35,
+        "Expected combined completion_tokens to be reasoning + answer (25 + 10)"
+    );
+    assert_eq!(
+        body.usage.total_tokens, 50,
+        "Expected combined total_tokens to be reasoning total + answer total (40 + 10)"
+    );
+}

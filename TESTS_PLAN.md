@@ -367,12 +367,27 @@ Add the following dependencies under `[dev-dependencies]`:
     - Response structure at HTTP layer
     - Protocol-level compliance (SSE format and [DONE] marker)
 
-### Step 25: Add response format verification tests
+### Step 25: Add response format verification tests [✓ COMPLETED]
 - Test detailed response structure assertions
 - Verify `id`, `created`, `model` fields
 - Check `choices` array structure
 - Validate `finish_reason` enum values
 - Test `usage` object (prompt_tokens, completion_tokens, total_tokens)
+- **Implementation Details**: Added 3 new tests in `tests/http.rs`:
+  - `test_http_chat_completion_response_format` (lines 361-435):
+    - Validates all response fields: id, object, model, created timestamp
+    - Checks choices array structure and choice index
+    - Verifies message content and tool_calls presence
+    - Confirms finish_reason value
+    - Validates all usage statistics
+  - `test_http_chat_completion_finish_reason_variants` (lines 437-528):
+    - Tests `FinishReason::Length` when reasoning exceeds budget
+    - Validates different finish_reason enum values are properly returned
+  - `test_http_chat_completion_usage_statistics` (lines 530-628):
+    - Verifies usage statistics aggregation across reasoning and answer phases
+    - Tests that prompt_tokens from reasoning is preserved
+    - Confirms completion_tokens is sum of reasoning + answer
+    - Validates total_tokens calculation formula
 
 ### Step 26: Add routing edge case tests
 - Test `GET /v1/chat/completions` (should return 405 Method Not Allowed)
