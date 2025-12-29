@@ -72,4 +72,4 @@ The project includes comprehensive testing infrastructure to ensure reliability 
 
 Comprehensive testing documentation is provided in `TESTING.md`, covering test execution commands, test structure, naming conventions, and detailed guides for adding new tests. The documentation explains how to use mock objects, test fixtures, and assertion helpers. It also includes debugging techniques and CI/CD integration guidelines, making it easy for developers to understand and extend the test suite.
 
-**Source files:** `TESTING.md`, `TESTS_PLAN.md`
+**Source files:** `TESTING.md`

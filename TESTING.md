@@ -398,8 +398,6 @@ Current test coverage includes:
 - **Service layer**: Core methods and validation logic
 - **Integration tests**: Complete flows and error scenarios
 - **HTTP endpoints**: Routing, validation, and error handling
-
-Future enhancements (Steps 23-26 in TESTS_PLAN.md):
 - Non-streaming chat completion integration tests
 - Streaming chat completion integration tests with SSE format verification
 - Detailed response format verification tests
