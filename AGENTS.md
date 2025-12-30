@@ -108,5 +108,31 @@ The service implements a two-phase completion:
 
 Reasoning content is either inline in content with `\<think\>` tags or in a separate `reasoning_content` field based on the `reasoning` feature flag.
 
+## Test Utilities
+
+The test suite uses helper functions in `tests/common/` to reduce repetition:
+
+### Setup Helpers
+- `create_test_app()` - Creates test app service
+- `create_test_config()` - Creates test configuration
+- `create_test_app_with_mock_server()` - Creates app with mock server
+
+### SSE Helpers
+- `build_sse_stream()` - Builds SSE-formatted streaming responses
+- `build_sse_stream_with_custom_delimiter()` - For custom line endings
+
+### Streaming Helpers
+- `collect_stream_chunks()` - Collects chunks from receiver
+- `collect_stream_with_timeout()` - Time-bounded collection
+
+### Mock Helpers
+- `setup_chat_completion_mock()` - Basic mock setup
+- `setup_two_phase_mocks()` - Reasoning+answer phase mocks
+- `setup_streaming_mocks()` - Streaming mocks with proper headers
+- `setup_error_mock()` - HTTP error response mocks
+
+### Parameterized Tests
+Use `rstest` for similar test cases (e.g., HTTP error codes).
+
 Detailed map of the project could be found in [PROJECTMAP.md](PROJECTMAP.md).
 Comprehensive guidance for testing the Adaptive Reasoner codebase could be found in [TESTING.md](TESTING.md).

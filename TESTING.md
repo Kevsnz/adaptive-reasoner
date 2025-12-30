@@ -403,6 +403,326 @@ Current test coverage includes:
 - Detailed response format verification tests
 - Routing edge case tests (404, 405, etc.)
 
+## Test Helper Functions
+
+The test suite includes reusable helper functions in `tests/common/` to reduce code duplication and improve maintainability.
+
+### Setup Helpers (`tests/common/setup.rs`)
+
+- **`create_test_config()`** - Creates a test configuration with default "test-model"
+  ```rust
+  let config = create_test_config();
+  // Returns Config with test-model configured
+  ```
+
+- **`create_test_app_components()`** - Creates test app components (config and reasoning service)
+  ```rust
+  let (config, reasoning_service) = create_test_app_components().await;
+  let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+  ```
+
+- **`create_test_app_with_mock_server()`** - Creates test app with wiremock server
+  ```rust
+  let (config, reasoning_service, mock_server) = create_test_app_with_mock_server().await;
+  // Use mock_server.uri() for model API URL
+  ```
+
+- **`create_basic_chat_request()`** - Creates minimal chat completion request
+  ```rust
+  let request = create_basic_chat_request();
+  // Returns ChatCompletionCreate with user message
+  ```
+
+- **`create_model_config(base_url: String)`** - Creates model config for given base URL
+  ```rust
+  let model_config = create_model_config(mock_server.uri());
+  ```
+
+### SSE Stream Helpers (`tests/common/sse.rs`)
+
+- **`build_sse_stream<T: Serialize>(chunks: &[T])`** - Builds SSE-formatted stream from chunks
+  ```rust
+  let sse = build_sse_stream(&chunks);
+  // Returns "data: {}\n\ndata: {}\n\n...data: [DONE]\n\n"
+  ```
+
+- **`build_sse_stream_with_custom_delimiter<T: Serialize>(chunks: &[T], delimiter: &str)`** - Builds SSE with custom delimiter
+  ```rust
+  let sse = build_sse_stream_with_custom_delimiter(&chunks, "\r\n");
+  // Use for CRLF tests
+  ```
+
+- **`build_sse_response(chunk: &Value)`** - Builds single SSE response from JSON
+  ```rust
+  let sse = build_sse_response(&json_value);
+  // Returns "data: {}\n\n"
+  ```
+
+### Mock Server Helpers (`tests/common/mock_server.rs`)
+
+- **`setup_chat_completion_mock(status: u16, body: Value)`** - Sets up basic mock with JSON body
+  ```rust
+  let mock_server = setup_chat_completion_mock(200, json_body).await;
+  // Returns configured mock server
+  ```
+
+- **`setup_two_phase_mocks(reasoning: Value, answer: Value)`** - Sets up reasoning + answer flow mocks
+  ```rust
+  let mock_server = setup_two_phase_mocks(reasoning_response, answer_response).await;
+  // First mock has up_to_n_times(1), second has no limit
+  ```
+
+- **`setup_streaming_mocks(reasoning_sse: String, answer_sse: String)`** - Sets up streaming mocks with SSE
+  ```rust
+  let mock_server = setup_streaming_mocks(reasoning_sse, answer_sse).await;
+  // Includes text/event-stream Content-Type headers
+  ```
+
+- **`setup_error_mock(status_code: u16, error_message: &str, error_type: &str)`** - Sets up error response mock
+  ```rust
+  let mock_server = setup_error_mock(404, "Model not found", "invalid_request_error").await;
+  // Returns mock with standard error JSON format
+  ```
+
+### Streaming Helpers (`tests/common/streaming.rs`)
+
+- **`collect_stream_chunks(receiver)`** - Collects all chunks from receiver channel
+  ```rust
+  let chunks = collect_stream_chunks(&mut receiver).await;
+  // Returns Vec<String> of decoded chunks (excludes [DONE])
+  // 5 second timeout
+  ```
+
+- **`collect_stream_with_timeout(receiver, duration)`** - Time-bounded chunk collection
+  ```rust
+  let (chunks, timeout_occurred) = collect_stream_with_timeout(&mut receiver, Duration::from_secs(10)).await;
+  // Returns (Vec<String>, bool)
+  ```
+
+- **`validate_sse_format(lines)`** - Validates SSE format correctness
+  ```rust
+  let (has_data_lines, has_empty_lines, has_crlf) = validate_sse_format(&lines);
+  // Returns (bool, bool, bool)
+  ```
+
+- **`count_valid_json_chunks(lines)`** - Counts valid JSON in SSE stream
+  ```rust
+  let count = count_valid_json_chunks(&lines);
+  // Returns number of successfully parsed JSON chunks
+  ```
+
+## Test Patterns
+
+### Parameterized Tests with rstest
+
+For similar test cases with different inputs, use rstest's `#[case]` attribute:
+
+```rust
+use rstest::rstest;
+
+#[rstest]
+#[case(401, "Invalid API key", "invalid_request_error")]
+#[case(403, "Access forbidden", "permission_error")]
+async fn test_http_error_codes(
+    #[case] status_code: u16,
+    #[case] message: &str,
+    #[case] error_type: &str,
+) {
+    // Test implementation using parameters
+}
+```
+
+### Standard Test Setup Pattern
+
+```rust
+#[actix_web::test]  // For http.rs tests
+// or
+#[tokio::test]     // For integration.rs tests
+async fn test_scenario() {
+    let (config, reasoning_service) = create_test_app_components().await;
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    // Test implementation
+}
+```
+
+### Mock Server Setup Pattern
+
+```rust
+async fn test_with_mock() {
+    let (config, reasoning_service, mock_server) = create_test_app_with_mock_server().await;
+
+    // Configure mock responses using mock_server
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(&mock_server)
+        .await;
+
+    // Test implementation
+}
+```
+
+### Streaming Test Pattern
+
+```rust
+async fn test_streaming() {
+    let (sender, mut receiver) = mpsc::channel(consts::CHANNEL_BUFFER_SIZE);
+
+    // Spawn streaming task
+    tokio::spawn(async move {
+        let _ = service.stream_completion(request, &config, sender).await;
+    });
+
+    // Collect chunks using helper
+    let chunks = collect_stream_chunks(&mut receiver).await;
+
+    // Assert on chunks
+    assert!(!chunks.is_empty());
+}
+```
+
+## Adding New Tests
+
+### Adding Unit Tests to Existing Modules
+
+1. Navigate to the source file you want to test
+2. Find or add the `#[cfg(test)] mod tests` section
+3. Add your test function following the naming convention
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_functionality() {
+        let input = create_test_input();
+        let result = function_under_test(input);
+        assert_eq!(result, expected_output);
+    }
+}
+```
+
+### Creating New Integration Tests
+
+1. Add test function to `tests/integration.rs` or create new test file
+2. Use helper functions from `tests/common/` where applicable
+3. Configure mock responses using helper functions
+4. Execute test scenario
+5. Assert on results
+
+```rust
+#[tokio::test]
+async fn test_new_integration_scenario() {
+    let mock_server = setup_chat_completion_mock(200, response_body).await;
+
+    let (config, reasoning_service) = create_test_app_components().await;
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let result = service.create_completion(request, &config).await;
+
+    assert!(result.is_ok());
+}
+```
+
+### Creating New Test Fixtures
+
+1. Open `tests/fixtures/mod.rs`
+2. Add function following existing patterns
+3. Return fully constructed test data
+
+```rust
+pub fn new_test_fixture() -> RequestType {
+    RequestType {
+        field1: "value".to_string(),
+        field2: Some(123),
+        // ... other fields
+    }
+}
+```
+
+## Mock Usage Patterns
+
+### Using MockLLMClient
+
+The `MockLLMClient` is used for testing service layer code without making real HTTP calls. It makes HTTP calls to a wiremock server that you configure.
+
+```rust
+use adaptive_reasoner::llm_client::LLMClientTrait;
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[tokio::test]
+async fn test_with_mock_llm_client() {
+    let mock_server = MockServer::start().await;
+
+    // Configure wiremock server with expected response
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200)
+            .set_body_json(expected_response))
+        .mount(&mock_server)
+        .await;
+
+    // Create service with mock client pointing to wiremock
+    let mock_client = MockLLMClient::new(mock_server.uri());
+    let service = ReasoningService::new(mock_client);
+
+    // Execute test
+    let result = service.create_completion(request, &config).await;
+
+    assert!(result.is_ok());
+}
+```
+
+### Using Test Helper Functions
+
+Helper functions in `tests/common/` reduce boilerplate:
+
+```rust
+use crate::common::setup;
+use crate::common::mock_server;
+use crate::common::sse;
+use crate::common::streaming;
+
+#[tokio::test]
+async fn test_with_helpers() {
+    // Use setup helpers
+    let (config, reasoning_service, mock_server) = setup::create_test_app_with_mock_server().await;
+
+    // Use mock helpers
+    let mock_server = mock_server::setup_error_mock(404, "Not found", "error").await;
+
+    // Use SSE helpers for streaming tests
+    let sse_stream = sse::build_sse_stream(&chunks);
+
+    // Use streaming helpers for collecting responses
+    let chunks = streaming::collect_stream_chunks(&mut receiver).await;
+
+    // Test assertions
+}
+```
+
+### Configuring Multiple Mock Responses
+
+For multi-phase flows (reasoning + answer), configure multiple responses:
+
+```rust
+Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200)
+        .set_body_json(reasoning_response))
+    .mount(&mock_server)
+    .await;
+
+Mock::given(method("POST"))
+    .and(path("/chat/completions"))
+    .respond_with(ResponseTemplate::new(200)
+        .set_body_json(answer_response))
+    .mount(&mock_server)
+    .await;
+```
+
 ## Additional Resources
 
 - [PROJECTMAP.md](PROJECTMAP.md) - Project architecture overview

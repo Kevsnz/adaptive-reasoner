@@ -2,7 +2,7 @@ use adaptive_reasoner::config::ModelConfig;
 use adaptive_reasoner::consts;
 use adaptive_reasoner::models::request;
 use adaptive_reasoner::service::ReasoningService;
-use reqwest::Client;
+use reqwest::{Client, header::HeaderValue};
 use serde_json::json;
 use tokio::sync::mpsc;
 use wiremock::{
@@ -15,8 +15,53 @@ use crate::fixtures::{
     sample_reasoning_response,
 };
 
+mod common;
 mod fixtures;
 mod mocks;
+
+use rstest::rstest;
+
+#[rstest]
+#[case(401, "Invalid API key", "invalid_request_error")]
+#[case(403, "Access forbidden", "permission_error")]
+#[case(404, "Model not found", "invalid_request_error")]
+#[case(429, "Rate limit exceeded", "rate_limit_error")]
+#[case(502, "Bad gateway", "gateway_error")]
+#[case(503, "Service temporarily unavailable", "service_unavailable")]
+#[tokio::test]
+async fn test_integration_http_error_codes(
+    #[case] status_code: u16,
+    #[case] message: &str,
+    #[case] error_type: &str,
+) {
+    let mock_server = MockServer::start().await;
+    let model_config = create_model_config(mock_server.uri());
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(status_code).set_body_json(json!({
+            "error": {
+                "message": message,
+                "type": error_type
+            }
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let http_client = Client::new();
+    let service = ReasoningService::new(http_client);
+    let request = sample_chat_request();
+
+    let result = service.create_completion(request, &model_config).await;
+
+    assert!(result.is_err(), "Expected error from {} response", status_code);
+    match result.unwrap_err() {
+        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
+            assert!(msg.contains(&format!("status {}", status_code)), "Expected {} status in error", status_code);
+        }
+        _ => panic!("Expected ApiError variant"),
+    }
+}
 
 fn create_model_config(base_url: String) -> ModelConfig {
     ModelConfig {
@@ -29,7 +74,7 @@ fn create_model_config(base_url: String) -> ModelConfig {
 }
 
 fn build_response_json(response: &serde_json::Value) -> String {
-    format!("data: {}\n\n", serde_json::to_string(response).unwrap())
+    crate::common::sse::build_sse_response(response)
 }
 
 #[tokio::test]
@@ -140,43 +185,12 @@ async fn test_integration_streaming_flow_with_multiple_chunks() {
             .await;
     });
 
-    let mut received_messages = vec![];
-    let mut messages_received = 0;
-    let timeout = tokio::time::Duration::from_secs(5);
-    let start_time = tokio::time::Instant::now();
-
-    loop {
-        match tokio::time::timeout(timeout, receiver.recv()).await {
-            Ok(Some(result)) => match result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    if !text.contains("[DONE]") {
-                        received_messages.push(text.to_string());
-                        messages_received += 1;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Received error: {:?}", e);
-                    panic!("Received error: {:?}", e);
-                }
-            },
-            Ok(None) => {
-                break;
-            }
-            Err(_) => {
-                break;
-            }
-        }
-        if start_time.elapsed() > timeout {
-            eprintln!("Timeout waiting for chunks");
-            break;
-        }
-    }
+    let received_messages = crate::common::streaming::collect_stream_chunks(&mut receiver).await;
 
     assert!(
-        messages_received > 0,
+        !received_messages.is_empty(),
         "Expected to receive streaming chunks, got {}",
-        messages_received
+        received_messages.len()
     );
 
     let final_chunk = received_messages.last().unwrap();
@@ -188,19 +202,17 @@ async fn test_integration_streaming_flow_with_multiple_chunks() {
 
 #[tokio::test]
 async fn test_integration_api_failure_at_reasoning_phase() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        500,
+        json!({
             "error": {
                 "message": "Internal server error",
                 "type": "internal_error"
             }
-        })))
-        .mount(&mock_server)
-        .await;
+        }),
+    ).await;
+
+    let model_config = create_model_config(mock_server.uri());
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -257,14 +269,12 @@ async fn test_integration_api_failure_at_answer_phase() {
 
 #[tokio::test]
 async fn test_integration_malformed_response() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        200,
+        json!({"invalid": "response"}),
+    ).await;
 
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("{invalid json}"))
-        .mount(&mock_server)
-        .await;
+    let model_config = create_model_config(mock_server.uri());
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -282,16 +292,13 @@ async fn test_integration_malformed_response() {
 
 #[tokio::test]
 async fn test_integration_reasoning_budget_exceeded() {
-    let mock_server = MockServer::start().await;
-
     let mut reasoning_response = sample_reasoning_response();
     reasoning_response.choices[0].finish_reason = adaptive_reasoner::models::FinishReason::Length;
 
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
-        .mount(&mock_server)
-        .await;
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        200,
+        serde_json::to_value(&reasoning_response).unwrap(),
+    ).await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -422,17 +429,8 @@ async fn test_integration_chunk_ordering_guarantee() {
     let reasoning_chunks = sample_reasoning_chunks();
     let answer_chunks = sample_answer_chunks();
 
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
-    }
-    reasoning_sse.push_str("data: [DONE]\n\n");
-
-    let mut answer_sse = String::new();
-    for chunk in &answer_chunks {
-        answer_sse.push_str(&build_response_json(&json!(chunk)));
-    }
-    answer_sse.push_str("data: [DONE]\n\n");
+    let reasoning_sse = crate::common::sse::build_sse_stream(&reasoning_chunks);
+    let answer_sse = crate::common::sse::build_sse_stream(&answer_chunks);
 
     use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
@@ -524,12 +522,7 @@ async fn test_integration_incomplete_stream_missing_done() {
 
     let reasoning_chunks = sample_reasoning_chunks();
 
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
-    }
-    reasoning_sse.push_str("data: [DONE]\n\n");
-
+    let reasoning_sse = crate::common::sse::build_sse_stream(&reasoning_chunks);
     let answer_sse = String::from("data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n");
 
     use reqwest::header::{CONTENT_TYPE, HeaderValue};
@@ -691,17 +684,8 @@ async fn test_integration_timeout_during_streaming() {
 
     let reasoning_chunks = sample_reasoning_chunks();
 
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        reasoning_sse.push_str(&build_response_json(&json!(chunk)));
-    }
-    reasoning_sse.push_str("data: [DONE]\n\n");
-
-    let mut answer_sse = String::new();
-    for chunk in &sample_answer_chunks() {
-        answer_sse.push_str(&build_response_json(&json!(chunk)));
-    }
-    answer_sse.push_str("data: [DONE]\n\n");
+    let reasoning_sse = crate::common::sse::build_sse_stream(&reasoning_chunks);
+    let answer_sse = crate::common::sse::build_sse_stream(&sample_answer_chunks());
 
     use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
@@ -777,201 +761,9 @@ async fn test_integration_timeout_during_streaming() {
 }
 
 #[tokio::test]
-async fn test_integration_http_error_401_unauthorized() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
-            "error": {
-                "message": "Invalid API key",
-                "type": "invalid_request_error"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 401 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 401"), "Expected 401 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
-async fn test_integration_http_error_403_forbidden() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(403).set_body_json(json!({
-            "error": {
-                "message": "Access forbidden",
-                "type": "permission_error"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 403 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 403"), "Expected 403 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
-async fn test_integration_http_error_404_not_found() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
-            "error": {
-                "message": "Model not found",
-                "type": "invalid_request_error"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 404 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 404"), "Expected 404 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
-async fn test_integration_http_error_429_rate_limit() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
-            "error": {
-                "message": "Rate limit exceeded",
-                "type": "rate_limit_error"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 429 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 429"), "Expected 429 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
-async fn test_integration_http_error_502_bad_gateway() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(502).set_body_json(json!({
-            "error": {
-                "message": "Bad gateway",
-                "type": "gateway_error"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 502 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 502"), "Expected 502 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
-async fn test_integration_http_error_503_service_unavailable() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
-            "error": {
-                "message": "Service temporarily unavailable",
-                "type": "service_unavailable"
-            }
-        })))
-        .mount(&mock_server)
-        .await;
-
-    let http_client = Client::new();
-    let service = ReasoningService::new(http_client);
-    let request = sample_chat_request();
-
-    let result = service.create_completion(request, &model_config).await;
-
-    assert!(result.is_err(), "Expected error from 503 response");
-    match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains("status 503"), "Expected 503 status in error");
-        }
-        _ => panic!("Expected ApiError variant"),
-    }
-}
-
-#[tokio::test]
 async fn test_integration_empty_response_body() {
-    let mock_server = MockServer::start().await;
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(200, "").await;
     let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(""))
-        .mount(&mock_server)
-        .await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -989,14 +781,11 @@ async fn test_integration_empty_response_body() {
 
 #[tokio::test]
 async fn test_integration_invalid_json_response() {
-    let mock_server = MockServer::start().await;
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        200,
+        "{bad json}".to_string(),
+    ).await;
     let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("{bad json"))
-        .mount(&mock_server)
-        .await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -1014,17 +803,11 @@ async fn test_integration_invalid_json_response() {
 
 #[tokio::test]
 async fn test_integration_response_missing_required_fields() {
-    let mock_server = MockServer::start().await;
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        200,
+        json!({"id": "test-id", "object": "chat.completion"}),
+    ).await;
     let model_config = create_model_config(mock_server.uri());
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "id": "test-id",
-            "object": "chat.completion"
-        })))
-        .mount(&mock_server)
-        .await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);

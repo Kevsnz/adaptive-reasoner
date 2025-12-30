@@ -1,6 +1,6 @@
 use actix_web::http::{StatusCode, header};
 use actix_web::test;
-use reqwest::Client;
+use reqwest::{Client, header::{HeaderValue, CONTENT_TYPE}};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,7 +14,48 @@ use adaptive_reasoner::config::{Config, ModelConfig};
 use adaptive_reasoner::models::model_list;
 use adaptive_reasoner::service::ReasoningService;
 
+mod common;
 mod fixtures;
+
+use rstest::rstest;
+
+#[rstest]
+#[case(401, "Invalid API key", "invalid_request_error")]
+#[case(403, "Access forbidden", "permission_error")]
+#[case(404, "Model not found", "invalid_request_error")]
+#[case(429, "Rate limit exceeded", "rate_limit_error")]
+#[case(502, "Bad gateway", "gateway_error")]
+#[case(503, "Service temporarily unavailable", "service_unavailable")]
+#[actix_web::test]
+async fn test_http_error_codes(
+    #[case] status_code: u16,
+    #[case] message: &str,
+    #[case] error_type: &str,
+) {
+    let mock_server = crate::common::mock_server::setup_error_mock(
+        status_code,
+        message,
+        error_type,
+    ).await;
+
+    let mut config = create_test_config();
+    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
+
+    let config = Arc::new(config);
+    let http_client = Client::new();
+    let reasoning_service = Arc::new(ReasoningService::new(http_client));
+
+    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
+
+    let request_body =
+        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
+    let req = test::TestRequest::post()
+        .uri("/v1/chat/completions")
+        .set_json(&request_body)
+        .to_request();
+    let resp = test::call_service(&app, req).await;
+    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
+}
 
 fn create_test_config() -> Config {
     let mut models = HashMap::new();
@@ -33,10 +74,7 @@ fn create_test_config() -> Config {
 
 #[actix_web::test]
 async fn test_http_models_endpoint() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let req = test::TestRequest::get().uri("/v1/models").to_request();
@@ -55,10 +93,7 @@ async fn test_http_models_endpoint() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_invalid_model() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let request_body =
@@ -73,10 +108,7 @@ async fn test_http_chat_completion_invalid_model() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_assistant_last() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let request_body = json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi there"}]});
@@ -90,10 +122,7 @@ async fn test_http_chat_completion_assistant_last() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_malformed_json() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let req = test::TestRequest::post()
@@ -107,10 +136,7 @@ async fn test_http_chat_completion_malformed_json() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_empty_messages() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let request_body = json!({"model": "test-model", "messages": []});
@@ -124,7 +150,10 @@ async fn test_http_chat_completion_empty_messages() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_api_error() {
-    let mock_server = MockServer::start().await;
+    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
+        500,
+        json!({"error": {"message": "Internal server error", "type": "internal_error"}}),
+    ).await;
 
     let mut config = create_test_config();
     config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
@@ -132,14 +161,6 @@ async fn test_http_chat_completion_api_error() {
     let config = Arc::new(config);
     let http_client = Client::new();
     let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(500).set_body_json(
-            json!({"error": {"message": "Internal server error", "type": "internal_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
 
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
@@ -155,6 +176,8 @@ async fn test_http_chat_completion_api_error() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_non_streaming() {
+    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+
     let mock_server = MockServer::start().await;
 
     let mut config = create_test_config();
@@ -163,8 +186,6 @@ async fn test_http_chat_completion_non_streaming() {
     let config = Arc::new(config);
     let http_client = Client::new();
     let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -245,17 +266,8 @@ async fn test_http_chat_completion_streaming() {
     let reasoning_chunks = sample_reasoning_chunks();
     let answer_chunks = sample_answer_chunks();
 
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        reasoning_sse.push_str(&format!("data: {}\n\n", serde_json::to_string(chunk).unwrap()));
-    }
-    reasoning_sse.push_str("data: [DONE]\n\n");
-
-    let mut answer_sse = String::new();
-    for chunk in &answer_chunks {
-        answer_sse.push_str(&format!("data: {}\n\n", serde_json::to_string(chunk).unwrap()));
-    }
-    answer_sse.push_str("data: [DONE]\n\n");
+    let reasoning_sse = crate::common::sse::build_sse_stream(&reasoning_chunks);
+    let answer_sse = crate::common::sse::build_sse_stream(&answer_chunks);
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -647,10 +659,7 @@ async fn test_http_chat_completion_usage_statistics() {
 
 #[actix_web::test]
 async fn test_http_routing_get_method_not_allowed() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let req = test::TestRequest::get()
@@ -666,10 +675,7 @@ async fn test_http_routing_get_method_not_allowed() {
 
 #[actix_web::test]
 async fn test_http_routing_404_nonexistent_v1_route() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let req = test::TestRequest::get()
@@ -685,10 +691,7 @@ async fn test_http_routing_404_nonexistent_v1_route() {
 
 #[actix_web::test]
 async fn test_http_routing_404_nonexistent_root_route() {
-    let config = Arc::new(create_test_config());
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
+    let (config, reasoning_service) = crate::common::setup::create_test_app_components().await;
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 
     let req = test::TestRequest::get()
@@ -718,12 +721,7 @@ async fn test_http_streaming_sse_format_correctness() {
 
     let reasoning_chunks = sample_reasoning_chunks();
 
-    let mut sse_response = String::new();
-    for chunk in &reasoning_chunks {
-        let json_str = serde_json::to_string(chunk).unwrap();
-        sse_response.push_str(&format!("data: {}\r\n\r\n", json_str));
-    }
-    sse_response.push_str("data: [DONE]\r\n\r\n");
+    let sse_response = crate::common::sse::build_sse_stream_with_custom_delimiter(&reasoning_chunks, "\r\n");
 
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
@@ -766,37 +764,12 @@ async fn test_http_streaming_sse_format_correctness() {
 
     let lines: Vec<&str> = body_str.lines().collect();
 
-    let mut data_count = 0;
-    let mut has_crlf = false;
-    let mut has_lf = false;
+    let (has_data_lines, has_empty_lines, _has_crlf) =
+        crate::common::streaming::validate_sse_format(&lines);
 
-    for i in 0..lines.len().saturating_sub(1) {
-        let line = lines[i];
-
-        if line.starts_with("data: ") {
-            data_count += 1;
-            let data_content = &line[6..];
-            if data_content == "[DONE]" {
-                continue;
-            }
-            if serde_json::from_str::<serde_json::Value>(data_content).is_ok() {
-                has_crlf = true;
-            }
-        }
-    }
-
-    assert!(data_count > 0, "Expected at least one data line");
-
-    for (i, line) in lines.iter().enumerate() {
-        if *line == "" {
-            if i > 0 && lines[i - 1].starts_with("data: ") {
-                has_lf = true;
-            }
-        }
-    }
-
+    assert!(has_data_lines, "Expected at least one data line");
     assert!(
-        has_lf || has_crlf,
+        has_empty_lines,
         "Expected SSE format with proper line endings"
     );
 
@@ -945,16 +918,9 @@ async fn test_http_streaming_incomplete_stream() {
     let reasoning_service = Arc::new(ReasoningService::new(http_client));
 
     use crate::fixtures::sample_reasoning_chunks;
-    use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
     let reasoning_chunks = sample_reasoning_chunks();
-
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        let json_str = serde_json::to_string(chunk).unwrap();
-        reasoning_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
-    }
-    reasoning_sse.push_str("data: [DONE]\r\n\r\n");
+    let reasoning_sse = crate::common::sse::build_sse_stream_with_custom_delimiter(&reasoning_chunks, "\r\n");
 
     let answer_sse = "data: {\"id\":\"test-answer\",\"object\":\"chat.completion.chunk\",\"created\":1234567891,\"model\":\"test-model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Partial\"},\"logprobs\":null,\"finish_reason\":null}]}\r\n\r\n";
 
@@ -1024,16 +990,9 @@ async fn test_http_streaming_malformed_json_chunk() {
     let reasoning_service = Arc::new(ReasoningService::new(http_client));
 
     use crate::fixtures::sample_reasoning_chunks;
-    use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
     let reasoning_chunks = sample_reasoning_chunks();
-
-    let mut reasoning_sse = String::new();
-    for chunk in &reasoning_chunks {
-        let json_str = serde_json::to_string(chunk).unwrap();
-        reasoning_sse.push_str(&format!("data: {}\r\n\r\n", json_str));
-    }
-    reasoning_sse.push_str("data: [DONE]\r\n\r\n");
+    let reasoning_sse = crate::common::sse::build_sse_stream_with_custom_delimiter(&reasoning_chunks, "\r\n");
 
     let answer_sse = "data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Valid\"}}]}\r\n\r\n\
                       data: invalid json here\r\n\r\n\
@@ -1096,192 +1055,6 @@ async fn test_http_streaming_malformed_json_chunk() {
         valid_json_count > 0,
         "Expected at least some valid JSON chunks despite malformed data"
     );
-}
-
-#[actix_web::test]
-async fn test_http_error_401_unauthorized() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(401).set_body_json(
-            json!({"error": {"message": "Invalid API key", "type": "invalid_request_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-}
-
-#[actix_web::test]
-async fn test_http_error_403_forbidden() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(403).set_body_json(
-            json!({"error": {"message": "Access forbidden", "type": "permission_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-}
-
-#[actix_web::test]
-async fn test_http_error_404_model_not_found() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(404).set_body_json(
-            json!({"error": {"message": "Model not found", "type": "invalid_request_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-}
-
-#[actix_web::test]
-async fn test_http_error_429_rate_limit() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(429).set_body_json(
-            json!({"error": {"message": "Rate limit exceeded", "type": "rate_limit_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-}
-
-#[actix_web::test]
-async fn test_http_error_502_bad_gateway() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(502).set_body_json(
-            json!({"error": {"message": "Bad gateway", "type": "gateway_error"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
-}
-
-#[actix_web::test]
-async fn test_http_error_503_service_unavailable() {
-    let mock_server = MockServer::start().await;
-
-    let mut config = create_test_config();
-    config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
-
-    let config = Arc::new(config);
-    let http_client = Client::new();
-    let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(503).set_body_json(
-            json!({"error": {"message": "Service temporarily unavailable", "type": "service_unavailable"}}),
-        ))
-        .mount(&mock_server)
-        .await;
-
-    let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
-
-    let request_body =
-        json!({"model": "test-model", "messages": [{"role": "user", "content": "Hello"}]});
-    let req = test::TestRequest::post()
-        .uri("/v1/chat/completions")
-        .set_json(&request_body)
-        .to_request();
-    let resp = test::call_service(&app, req).await;
-    assert_eq!(resp.status(), StatusCode::BAD_GATEWAY);
 }
 
 #[actix_web::test]
