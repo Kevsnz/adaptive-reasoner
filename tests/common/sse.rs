@@ -29,3 +29,13 @@ pub fn build_sse_response_with_delimiter(chunk: &serde_json::Value, delimiter: &
     let json_str = serde_json::to_string(chunk).unwrap();
     format!("data: {}{}{}", json_str, delimiter, delimiter)
 }
+
+pub fn build_two_phase_sse<T: Serialize>(
+    reasoning_chunks: &[T],
+    answer_chunks: &[T],
+) -> (String, String) {
+    (
+        build_sse_stream(reasoning_chunks),
+        build_sse_stream(answer_chunks),
+    )
+}

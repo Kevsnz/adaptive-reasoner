@@ -372,7 +372,12 @@ async fn test_http_chat_completion_streaming() {
 
 #[actix_web::test]
 async fn test_http_chat_completion_response_format() {
-    let mock_server = MockServer::start().await;
+    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+
+    let mock_server = crate::common::mock_server::setup_two_phase_mocks(
+        serde_json::to_value(&sample_reasoning_response()).unwrap(),
+        serde_json::to_value(&sample_answer_response()).unwrap(),
+    ).await;
 
     let mut config = create_test_config();
     config.models.get_mut("test-model").unwrap().api_url = mock_server.uri();
@@ -380,21 +385,6 @@ async fn test_http_chat_completion_response_format() {
     let config = Arc::new(config);
     let http_client = Client::new();
     let reasoning_service = Arc::new(ReasoningService::new(http_client));
-
-    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_reasoning_response()))
-        .up_to_n_times(1)
-        .mount(&mock_server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_answer_response()))
-        .mount(&mock_server)
-        .await;
 
     let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
 

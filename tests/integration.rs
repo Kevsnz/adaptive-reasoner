@@ -79,24 +79,14 @@ fn build_response_json(response: &serde_json::Value) -> String {
 
 #[tokio::test]
 async fn test_integration_complete_reasoning_and_answer_flow() {
-    let mock_server = MockServer::start().await;
+    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+
+    let mock_server = crate::common::mock_server::setup_two_phase_mocks(
+        serde_json::to_value(&sample_reasoning_response()).unwrap(),
+        serde_json::to_value(&sample_answer_response()).unwrap(),
+    ).await;
+
     let model_config = create_model_config(mock_server.uri());
-
-    let reasoning_response = sample_reasoning_response();
-    let answer_response = sample_answer_response();
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
-        .up_to_n_times(1)
-        .mount(&mock_server)
-        .await;
-
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&answer_response))
-        .mount(&mock_server)
-        .await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -382,24 +372,15 @@ async fn test_integration_tool_calls_propagation() {
 
 #[tokio::test]
 async fn test_integration_empty_reasoning_content() {
-    let mock_server = MockServer::start().await;
-    let model_config = create_model_config(mock_server.uri());
-
     let mut reasoning_response = sample_reasoning_response();
     reasoning_response.choices[0].message.content = None;
 
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&reasoning_response))
-        .up_to_n_times(1)
-        .mount(&mock_server)
-        .await;
+    let mock_server = crate::common::mock_server::setup_two_phase_mocks(
+        serde_json::to_value(&reasoning_response).unwrap(),
+        serde_json::to_value(&sample_answer_response()).unwrap(),
+    ).await;
 
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(&sample_answer_response()))
-        .mount(&mock_server)
-        .await;
+    let model_config = create_model_config(mock_server.uri());
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
