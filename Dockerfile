@@ -21,7 +21,7 @@ WORKDIR /app
 COPY --from=builder /app/src/target/release/adaptive_reasoner .
 COPY config.json .
 
-ENV AR_CONFIG_FILE ./config.json
+ENV AR_CONFIG_FILE=./config.json
 
 EXPOSE 8080
 
