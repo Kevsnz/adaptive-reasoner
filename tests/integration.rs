@@ -2,7 +2,7 @@ use adaptive_reasoner::config::ModelConfig;
 use adaptive_reasoner::consts;
 use adaptive_reasoner::models::request;
 use adaptive_reasoner::service::ReasoningService;
-use reqwest::{Client, header::HeaderValue};
+use reqwest::Client;
 use serde_json::json;
 use tokio::sync::mpsc;
 use wiremock::{
@@ -17,7 +17,6 @@ use crate::fixtures::{
 
 mod common;
 mod fixtures;
-mod mocks;
 
 use rstest::rstest;
 
@@ -54,10 +53,18 @@ async fn test_integration_http_error_codes(
 
     let result = service.create_completion(request, &model_config).await;
 
-    assert!(result.is_err(), "Expected error from {} response", status_code);
+    assert!(
+        result.is_err(),
+        "Expected error from {} response",
+        status_code
+    );
     match result.unwrap_err() {
         adaptive_reasoner::errors::ReasonerError::ApiError(msg) => {
-            assert!(msg.contains(&format!("status {}", status_code)), "Expected {} status in error", status_code);
+            assert!(
+                msg.contains(&format!("status {}", status_code)),
+                "Expected {} status in error",
+                status_code
+            );
         }
         _ => panic!("Expected ApiError variant"),
     }
@@ -79,12 +86,13 @@ fn build_response_json(response: &serde_json::Value) -> String {
 
 #[tokio::test]
 async fn test_integration_complete_reasoning_and_answer_flow() {
-    use crate::fixtures::{sample_reasoning_response, sample_answer_response};
+    use crate::fixtures::{sample_answer_response, sample_reasoning_response};
 
     let mock_server = crate::common::mock_server::setup_two_phase_mocks(
         serde_json::to_value(&sample_reasoning_response()).unwrap(),
         serde_json::to_value(&sample_answer_response()).unwrap(),
-    ).await;
+    )
+    .await;
 
     let model_config = create_model_config(mock_server.uri());
 
@@ -200,7 +208,8 @@ async fn test_integration_api_failure_at_reasoning_phase() {
                 "type": "internal_error"
             }
         }),
-    ).await;
+    )
+    .await;
 
     let model_config = create_model_config(mock_server.uri());
 
@@ -259,10 +268,9 @@ async fn test_integration_api_failure_at_answer_phase() {
 
 #[tokio::test]
 async fn test_integration_malformed_response() {
-    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
-        200,
-        json!({"invalid": "response"}),
-    ).await;
+    let mock_server =
+        crate::common::mock_server::setup_chat_completion_mock(200, json!({"invalid": "response"}))
+            .await;
 
     let model_config = create_model_config(mock_server.uri());
 
@@ -288,7 +296,8 @@ async fn test_integration_reasoning_budget_exceeded() {
     let mock_server = crate::common::mock_server::setup_chat_completion_mock(
         200,
         serde_json::to_value(&reasoning_response).unwrap(),
-    ).await;
+    )
+    .await;
 
     let http_client = Client::new();
     let service = ReasoningService::new(http_client);
@@ -378,7 +387,8 @@ async fn test_integration_empty_reasoning_content() {
     let mock_server = crate::common::mock_server::setup_two_phase_mocks(
         serde_json::to_value(&reasoning_response).unwrap(),
         serde_json::to_value(&sample_answer_response()).unwrap(),
-    ).await;
+    )
+    .await;
 
     let model_config = create_model_config(mock_server.uri());
 
@@ -504,7 +514,9 @@ async fn test_integration_incomplete_stream_missing_done() {
     let reasoning_chunks = sample_reasoning_chunks();
 
     let reasoning_sse = crate::common::sse::build_sse_stream(&reasoning_chunks);
-    let answer_sse = String::from("data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n");
+    let answer_sse = String::from(
+        "data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+    );
 
     use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
@@ -586,7 +598,9 @@ async fn test_integration_incomplete_stream_malformed_chunk() {
     }
     reasoning_sse.push_str("data: [DONE]\n\n");
 
-    let answer_sse = String::from("data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: invalid json here\n\ndata: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"World\"}}]}\n\ndata: [DONE]\n\n");
+    let answer_sse = String::from(
+        "data: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\ndata: invalid json here\n\ndata: {\"id\":\"test\",\"choices\":[{\"delta\":{\"content\":\"World\"}}]}\n\ndata: [DONE]\n\n",
+    );
 
     use reqwest::header::{CONTENT_TYPE, HeaderValue};
 
@@ -729,7 +743,10 @@ async fn test_integration_timeout_during_streaming() {
             },
             Ok(None) => break,
             Err(_) => {
-                assert!(chunks_received > 0, "Expected to receive some chunks before timeout");
+                assert!(
+                    chunks_received > 0,
+                    "Expected to receive some chunks before timeout"
+                );
                 break;
             }
         }
@@ -738,7 +755,10 @@ async fn test_integration_timeout_during_streaming() {
         }
     }
 
-    assert!(chunks_received > 0, "Expected to receive chunks before timeout");
+    assert!(
+        chunks_received > 0,
+        "Expected to receive chunks before timeout"
+    );
 }
 
 #[tokio::test]
@@ -754,18 +774,16 @@ async fn test_integration_empty_response_body() {
 
     assert!(result.is_err(), "Expected error from empty response");
     match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ParseError(_) |
-        adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
+        adaptive_reasoner::errors::ReasonerError::ParseError(_)
+        | adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
         _ => panic!("Expected ParseError or ApiError variant"),
     }
 }
 
 #[tokio::test]
 async fn test_integration_invalid_json_response() {
-    let mock_server = crate::common::mock_server::setup_chat_completion_mock(
-        200,
-        "{bad json}".to_string(),
-    ).await;
+    let mock_server =
+        crate::common::mock_server::setup_chat_completion_mock(200, "{bad json}".to_string()).await;
     let model_config = create_model_config(mock_server.uri());
 
     let http_client = Client::new();
@@ -776,8 +794,8 @@ async fn test_integration_invalid_json_response() {
 
     assert!(result.is_err(), "Expected error from invalid JSON");
     match result.unwrap_err() {
-        adaptive_reasoner::errors::ReasonerError::ParseError(_) |
-        adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
+        adaptive_reasoner::errors::ReasonerError::ParseError(_)
+        | adaptive_reasoner::errors::ReasonerError::ApiError(_) => {}
         _ => panic!("Expected ParseError or ApiError variant"),
     }
 }
@@ -787,7 +805,8 @@ async fn test_integration_response_missing_required_fields() {
     let mock_server = crate::common::mock_server::setup_chat_completion_mock(
         200,
         json!({"id": "test-id", "object": "chat.completion"}),
-    ).await;
+    )
+    .await;
     let model_config = create_model_config(mock_server.uri());
 
     let http_client = Client::new();
@@ -941,7 +960,10 @@ async fn test_performance_streaming_concurrent_requests() {
         duration
     );
 
-    eprintln!("Completed {} streaming requests in {:?}", num_requests, duration);
+    eprintln!(
+        "Completed {} streaming requests in {:?}",
+        num_requests, duration
+    );
 }
 
 #[tokio::test]

@@ -42,45 +42,6 @@ pub async fn collect_stream_chunks(
     received_messages
 }
 
-pub async fn collect_stream_with_timeout(
-    receiver: &mut mpsc::Receiver<Result<Bytes, ReasonerError>>,
-    duration: Duration,
-) -> (Vec<String>, bool) {
-    let mut received_messages = vec![];
-    let mut timeout_occurred = false;
-    let start_time = Instant::now();
-
-    loop {
-        match tokio::time::timeout(duration, receiver.recv()).await {
-            Ok(Some(result)) => match result {
-                Ok(bytes) => {
-                    let text = String::from_utf8_lossy(&bytes);
-                    if !text.contains("[DONE]") {
-                        received_messages.push(text.to_string());
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Received error: {:?}", e);
-                    panic!("Received error: {:?}", e);
-                }
-            },
-            Ok(None) => {
-                break;
-            }
-            Err(_) => {
-                timeout_occurred = true;
-                break;
-            }
-        }
-        if start_time.elapsed() > duration {
-            timeout_occurred = true;
-            break;
-        }
-    }
-
-    (received_messages, timeout_occurred)
-}
-
 pub fn validate_sse_format(lines: &[&str]) -> (bool, bool, bool) {
     let mut has_data_lines = false;
     let mut has_empty_lines = false;
@@ -105,19 +66,4 @@ pub fn validate_sse_format(lines: &[&str]) -> (bool, bool, bool) {
     }
 
     (has_data_lines, has_empty_lines, has_crlf)
-}
-
-pub fn count_valid_json_chunks(lines: &[&str]) -> usize {
-    let mut count = 0;
-
-    for line in lines {
-        if line.starts_with("data: ") && !line.contains("[DONE]") {
-            let data_str = &line[6..];
-            if serde_json::from_str::<serde_json::Value>(data_str).is_ok() {
-                count += 1;
-            }
-        }
-    }
-
-    count
 }

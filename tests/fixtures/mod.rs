@@ -1,53 +1,16 @@
 use adaptive_reasoner::models::request;
 use adaptive_reasoner::models::response_direct::{ChatCompletion, Choice};
-use adaptive_reasoner::models::response_stream::{ChatCompletionChunk, ChunkChoice, ChunkChoiceDelta};
+use adaptive_reasoner::models::response_stream::{
+    ChatCompletionChunk, ChunkChoice, ChunkChoiceDelta,
+};
 use adaptive_reasoner::models::{FinishReason, Usage};
 
 pub fn sample_chat_request() -> request::ChatCompletionCreate {
     request::ChatCompletionCreate {
         model: "test-model".to_string(),
-        messages: vec![
-            request::Message::User(request::MessageSystemUser {
-                content: request::MessageContent::String("Hello, how are you?".to_string()),
-            }),
-        ],
-        max_tokens: Some(100),
-        stop: None,
-        stream: None,
-        stream_options: None,
-        tools: None,
-        tool_choice: None,
-        extra: Default::default(),
-    }
-}
-
-pub fn empty_messages_request() -> request::ChatCompletionCreate {
-    request::ChatCompletionCreate {
-        model: "test-model".to_string(),
-        messages: vec![],
-        max_tokens: Some(100),
-        stop: None,
-        stream: None,
-        stream_options: None,
-        tools: None,
-        tool_choice: None,
-        extra: Default::default(),
-    }
-}
-
-pub fn assistant_last_request() -> request::ChatCompletionCreate {
-    request::ChatCompletionCreate {
-        model: "test-model".to_string(),
-        messages: vec![
-            request::Message::User(request::MessageSystemUser {
-                content: request::MessageContent::String("Hello".to_string()),
-            }),
-            request::Message::Assistant(request::MessageAssistant {
-                reasoning_content: None,
-                content: Some("I'm doing well".to_string()),
-                tool_calls: None,
-            }),
-        ],
+        messages: vec![request::Message::User(request::MessageSystemUser {
+            content: request::MessageContent::String("Hello, how are you?".to_string()),
+        })],
         max_tokens: Some(100),
         stop: None,
         stream: None,
@@ -102,21 +65,6 @@ pub fn sample_answer_response() -> ChatCompletion {
             prompt_tokens: 10,
             completion_tokens: 30,
             total_tokens: 40,
-        },
-    }
-}
-
-pub fn sample_error_response() -> ChatCompletion {
-    ChatCompletion {
-        id: "chatcmpl-error".to_string(),
-        object: "chat.completion".to_string(),
-        created: 1234567892,
-        model: "test-model".to_string(),
-        choices: vec![],
-        usage: Usage {
-            prompt_tokens: 10,
-            completion_tokens: 0,
-            total_tokens: 10,
         },
     }
 }

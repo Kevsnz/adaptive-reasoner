@@ -123,7 +123,6 @@ The test suite uses helper functions in `tests/common/` to reduce repetition:
 
 ### Streaming Helpers
 - `collect_stream_chunks()` - Collects chunks from receiver
-- `collect_stream_with_timeout()` - Time-bounded collection
 
 ### Mock Helpers
 - `setup_chat_completion_mock()` - Basic mock setup

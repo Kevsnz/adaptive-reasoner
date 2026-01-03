@@ -117,11 +117,8 @@ Test fixtures are reusable test data objects defined in `tests/fixtures/mod.rs`.
 
 **Available Fixtures:**
 - `sample_chat_request()` - Basic valid chat completion request
-- `empty_messages_request()` - Invalid request with empty messages
-- `assistant_last_request()` - Invalid request ending with assistant message
 - `sample_reasoning_response()` - Successful reasoning phase response
 - `sample_answer_response()` - Successful answer phase response
-- `sample_error_response()` - Error scenario response
 - `sample_reasoning_chunks()` - Sequence of reasoning stream chunks
 - `sample_answer_chunks()` - Sequence of answer stream chunks
 
@@ -130,7 +127,6 @@ Test fixtures are reusable test data objects defined in `tests/fixtures/mod.rs`.
 Mock implementations of traits for isolated testing are in `tests/mocks/mod.rs`.
 
 **Available Mocks:**
-- `MockLLMClient` - Mock implementation of `LLMClientTrait`
 - `InMemoryConfigLoader` - Mock implementation of `ConfigLoader`
 
 ## Test Naming Conventions
@@ -227,37 +223,6 @@ pub fn new_test_fixture() -> RequestType {
 
 ## Mock Usage Patterns
 
-### Using MockLLMClient
-
-The `MockLLMClient` is used for testing service layer code without making real HTTP calls. It makes HTTP calls to a wiremock server that you configure.
-
-```rust
-use adaptive_reasoner::llm_client::LLMClientTrait;
-use wiremock::{Mock, MockServer, ResponseTemplate};
-
-#[tokio::test]
-async fn test_with_mock_llm_client() {
-    let mock_server = MockServer::start().await;
-    
-    // Configure wiremock server with expected response
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200)
-            .set_body_json(expected_response))
-        .mount(&mock_server)
-        .await;
-    
-    // Create service with mock client pointing to wiremock
-    let mock_client = MockLLMClient::new(mock_server.uri());
-    let service = ReasoningService::new(mock_client);
-    
-    // Execute test
-    let result = service.create_completion(request, &config).await;
-    
-    assert!(result.is_ok());
-}
-```
-
 ### Configuring Multiple Mock Responses
 
 For multi-phase flows (reasoning + answer), configure multiple responses:
@@ -298,7 +263,7 @@ let model_config = config.models.get("test-model").unwrap();
 
 ### Verifying Captured Requests
 
-Although MockLLMClient has tracking capabilities, use wiremock's request matching to verify requests:
+Use wiremock's request matching to verify requests:
 
 ```rust
 use wiremock::matchers::{body_json, method, path};
@@ -329,8 +294,6 @@ Located in `src/test_utils/helpers.rs`:
 - `create_test_chat_request(model, user_message)` - Create a test chat request
 - `create_test_model_config(model_name, api_url, api_key, reasoning_budget)` - Create model config
 - `create_test_config_with_model(...)` - Create a Config with a single model
-- `create_empty_messages_request()` - Create invalid request for validation tests
-- `create_assistant_last_request()` - Create invalid request ending with assistant message
 
 ### Assertion Functions
 
@@ -421,18 +384,6 @@ The test suite includes reusable helper functions in `tests/common/` to reduce c
   let app = test::init_service(create_app(reasoning_service.clone(), config.clone())).await;
   ```
 
-- **`create_test_app_with_mock_server()`** - Creates test app with wiremock server
-  ```rust
-  let (config, reasoning_service, mock_server) = create_test_app_with_mock_server().await;
-  // Use mock_server.uri() for model API URL
-  ```
-
-- **`create_basic_chat_request()`** - Creates minimal chat completion request
-  ```rust
-  let request = create_basic_chat_request();
-  // Returns ChatCompletionCreate with user message
-  ```
-
 - **`create_model_config(base_url: String)`** - Creates model config for given base URL
   ```rust
   let model_config = create_model_config(mock_server.uri());
@@ -493,22 +444,10 @@ The test suite includes reusable helper functions in `tests/common/` to reduce c
   // 5 second timeout
   ```
 
-- **`collect_stream_with_timeout(receiver, duration)`** - Time-bounded chunk collection
-  ```rust
-  let (chunks, timeout_occurred) = collect_stream_with_timeout(&mut receiver, Duration::from_secs(10)).await;
-  // Returns (Vec<String>, bool)
-  ```
-
 - **`validate_sse_format(lines)`** - Validates SSE format correctness
   ```rust
   let (has_data_lines, has_empty_lines, has_crlf) = validate_sse_format(&lines);
   // Returns (bool, bool, bool)
-  ```
-
-- **`count_valid_json_chunks(lines)`** - Counts valid JSON in SSE stream
-  ```rust
-  let count = count_valid_json_chunks(&lines);
-  // Returns number of successfully parsed JSON chunks
   ```
 
 ## Test Patterns
@@ -643,37 +582,6 @@ pub fn new_test_fixture() -> RequestType {
 ```
 
 ## Mock Usage Patterns
-
-### Using MockLLMClient
-
-The `MockLLMClient` is used for testing service layer code without making real HTTP calls. It makes HTTP calls to a wiremock server that you configure.
-
-```rust
-use adaptive_reasoner::llm_client::LLMClientTrait;
-use wiremock::{Mock, MockServer, ResponseTemplate};
-
-#[tokio::test]
-async fn test_with_mock_llm_client() {
-    let mock_server = MockServer::start().await;
-
-    // Configure wiremock server with expected response
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(ResponseTemplate::new(200)
-            .set_body_json(expected_response))
-        .mount(&mock_server)
-        .await;
-
-    // Create service with mock client pointing to wiremock
-    let mock_client = MockLLMClient::new(mock_server.uri());
-    let service = ReasoningService::new(mock_client);
-
-    // Execute test
-    let result = service.create_completion(request, &config).await;
-
-    assert!(result.is_ok());
-}
-```
 
 ### Using Test Helper Functions
 
